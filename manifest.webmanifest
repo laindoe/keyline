@@ -1,0 +1,14 @@
+{
+  "name": "KEYLINE",
+  "short_name": "KEYLINE",
+  "description": "Chroma-key guided vectorizer — mark your own anchors and guide lines, get clean bezier curves.",
+  "start_url": "keyline.html",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#10131f",
+  "theme_color": "#10131f",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

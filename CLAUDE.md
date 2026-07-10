@@ -39,6 +39,11 @@ a named `<g>` per part.
 step. Uses Canvas 2D, vanilla JS, no external JS dependencies (Google Fonts
 link only).
 
+Supporting files: `index.html` (landing page linking into the tool),
+`manifest.webmanifest` + `icons/` (PWA install support — add-to-home-screen
+on iOS launches straight into `keyline.html` standalone; no service worker,
+so it still needs network to load).
+
 ## Architecture notes
 
 - `state.layers[]` holds one object per Part: `{art, dots, lines}` (Image
