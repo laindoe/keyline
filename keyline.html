@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>KEYLINE — chroma-key vectorizer</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#10131f;
+  --panel:#181d2e;
+  --panel-2:#1f2540;
+  --line:#2b3252;
+  --bone:#e9e6dc;
+  --dim:#8b90a8;
+  --guide:#8dff5a;
+  --anchor:#ff5a3c;
+  --radius:14px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  background:var(--ink);color:var(--bone);
+  font-family:'Archivo',sans-serif;font-variation-settings:'wdth' 100;
+  overflow:hidden;touch-action:manipulation;
+}
+#app{display:flex;flex-direction:column;height:100%}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);flex-shrink:0}
+.regmark{width:20px;height:20px;flex-shrink:0}
+.wordmark{font-weight:850;font-size:18px;letter-spacing:.06em;font-variation-settings:'wdth' 118}
+.wordmark span{color:var(--guide)}
+.modeswitch{margin-left:auto;display:flex;gap:0;border:1px solid var(--line);border-radius:99px;overflow:hidden}
+.modeswitch button{
+  font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  padding:8px 14px;background:transparent;color:var(--dim);border:none;cursor:pointer;
+}
+.modeswitch button.on{background:var(--guide);color:var(--ink);font-weight:600}
+main{display:flex;flex:1;min-height:0}
+#stage{flex:1;position:relative;min-width:0;
+  background:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:28px 28px;background-position:center;}
+#cv{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+#emptyStage{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dim);pointer-events:none;text-align:center;padding:20px}
+#emptyStage .bigdot{width:52px;height:52px;border-radius:50%;border:2px dashed var(--guide);position:relative;opacity:.8}
+#emptyStage .bigdot::after{content:'';position:absolute;inset:16px;border-radius:50%;background:var(--anchor)}
+#emptyStage p{font-size:13px;max-width:270px;line-height:1.55}
+#status{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--line);border-radius:99px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--guide);padding:8px 16px;display:none;z-index:5;white-space:nowrap}
+
+/* ---------- panel ---------- */
+#panel{width:350px;flex-shrink:0;border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 60px;display:flex;flex-direction:column;gap:12px}
+.sect-title{font-size:11px;font-weight:750;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-variation-settings:'wdth' 112;display:flex;align-items:center;gap:8px}
+.sect-title::after{content:'';flex:1;border-top:1px dashed var(--line)}
+
+/* layer cards */
+.layer{
+  border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-2);
+  overflow:hidden;transition:border-color .2s;
+}
+.layer.sel{border-color:var(--guide);box-shadow:0 0 0 1px var(--guide)}
+.layer-head{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer}
+.layer-head .dot{width:12px;height:12px;border-radius:50%;background:var(--dim);flex-shrink:0}
+.layer.traced .layer-head .dot{background:var(--guide);box-shadow:0 0 8px color-mix(in srgb,var(--guide) 60%,transparent)}
+.layer-head input{
+  flex:1;background:transparent;border:none;color:var(--bone);font-family:'Archivo',sans-serif;
+  font-weight:700;font-size:14px;outline:none;min-width:0;font-variation-settings:'wdth' 108;
+}
+.layer-head input::placeholder{color:var(--dim)}
+.iconbtn{background:transparent;border:none;color:var(--dim);cursor:pointer;padding:4px;font-size:15px;line-height:1}
+.iconbtn:active{color:var(--anchor)}
+.layer-body{padding:0 12px 12px;display:none}
+.layer.sel .layer-body{display:block}
+.slots{display:flex;gap:6px;margin-bottom:8px}
+.slot{
+  flex:1;border:1px dashed var(--line);border-radius:10px;padding:9px 6px;text-align:center;cursor:pointer;
+  font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);
+  line-height:1.5;
+}
+.slot b{display:block;font-size:14px;font-weight:400}
+.slot.full{border-style:solid;color:var(--bone)}
+.slot.full.art{border-color:var(--bone)}
+.slot.full.dots{border-color:var(--anchor);color:var(--anchor)}
+.slot.full.lines{border-color:var(--guide);color:var(--guide)}
+.layer-stats{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim);line-height:1.7;margin-bottom:8px}
+.layer-stats b{color:var(--guide);font-weight:600}
+.layer-stats .warn{color:var(--anchor)}
+.layer-actions{display:flex;gap:6px}
+.layer-actions .btn{margin:0}
+.showart-row{display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin-bottom:8px}
+.showart-row input{width:16px;height:16px;accent-color:var(--guide)}
+
+.btn{
+  width:100%;padding:12px;border-radius:var(--radius);border:1px solid var(--line);
+  background:var(--panel-2);color:var(--bone);font-family:'Archivo',sans-serif;
+  font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+  font-variation-settings:'wdth' 110;cursor:pointer;
+}
+.btn.primary{background:var(--guide);color:var(--ink);border-color:var(--guide)}
+.btn.small{padding:9px;font-size:11px}
+.btn:disabled{opacity:.35;pointer-events:none}
+.btn.ghost{background:transparent}
+.btn.danger{color:var(--anchor);border-color:color-mix(in srgb,var(--anchor) 40%,transparent);background:transparent}
+
+.slider-row{margin-bottom:4px}
+.slider-row label{display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-bottom:4px}
+.slider-row label output{color:var(--guide)}
+input[type=range]{width:100%;appearance:none;-webkit-appearance:none;height:26px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:var(--anchor);margin-top:-9.5px;border:3px solid var(--ink)}
+input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:2px}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--anchor);border:3px solid var(--ink)}
+
+input[type=file]{display:none}
+
+@media (max-width:760px){
+  main{flex-direction:column}
+  #panel{width:100%;border-left:none;border-top:1px solid var(--line);height:48%;flex-shrink:0}
+  #stage{flex:1}
+}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <svg class="regmark" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="9" stroke="var(--guide)" stroke-width="1.6"/>
+    <circle cx="12" cy="12" r="3.2" fill="var(--anchor)"/>
+    <path d="M12 0v5M12 19v5M0 12h5M19 12h5" stroke="var(--bone)" stroke-width="1.4"/>
+  </svg>
+  <div class="wordmark">KEY<span>LINE</span></div>
+  <div class="modeswitch">
+    <button id="mPan" class="on">Pan</button>
+    <button id="mMove">Move part</button>
+  </div>
+</header>
+
+<main>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="emptyStage">
+      <div class="bigdot"></div>
+      <p>Add a part. Each part takes three frames: the original art, its red anchor dots, and the green guide lines connecting them.</p>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div id="panel">
+    <div class="sect-title">Parts</div>
+    <div id="layerList" style="display:flex;flex-direction:column;gap:8px"></div>
+    <button class="btn ghost" id="bAddLayer">+ Add part</button>
+
+    <div class="sect-title">Key settings</div>
+    <div class="slider-row">
+      <label>Key threshold <output id="oKey">60</output></label>
+      <input type="range" id="rKey" min="15" max="160" value="60">
+    </div>
+    <div class="slider-row">
+      <label>Min dot size <output id="oDot">15</output>px&sup2;</label>
+      <input type="range" id="rDot" min="3" max="300" value="15">
+    </div>
+    <div class="slider-row">
+      <label>Fit error <output id="oErr">6</output></label>
+      <input type="range" id="rErr" min="1" max="40" value="6">
+    </div>
+
+    <div class="sect-title">Export</div>
+    <button class="btn primary" id="bSvg" disabled>Download composed SVG</button>
+    <button class="btn ghost" id="bCopy" disabled>Copy SVG code</button>
+  </div>
+</main>
+</div>
+
+<input type="file" id="filePick" accept="image/*">
+
+<script>
+'use strict';
+/* ============================================================
+   KEYLINE v2 — layered chroma-key vectorizer
+   Each part = 3 frames (art / dots / lines) -> keyed against
+   its own background -> skeleton -> anchor-guided bezier fit.
+   Parts compose RIGGR-style: select, drag, pinch-scale, export
+   as one layered SVG.
+   ============================================================ */
+
+const WORK_MAX = 1300;
+const $ = id => document.getElementById(id);
+
+const state = {
+  layers:[],            // Layer objects
+  selId:null,
+  mode:'pan',           // 'pan' | 'move'
+  view:{x:0,y:0,z:0.5},
+  viewInit:false,
+  docW:0, docH:0,       // doc space = first layer's original dims
+};
+let uid=1;
+
+function newLayer(){
+  return {
+    id:uid++, name:'',
+    art:null, dots:null, lines:null,      // Image objects
+    origW:0, origH:0, scale:1, W:0, H:0,  // set from first frame loaded
+    anchors:[],                            // [{x,y}] working res
+    paths:[],                              // ordered polylines
+    curves:[],                             // fitted beziers (working res)
+    tx:0, ty:0, s:1,                       // compose transform (doc space)
+    showArt:true, traced:false, err:'',
+  };
+}
+
+/* ================= canvas & view ================= */
+const cv=$('cv'), ctx=cv.getContext('2d');
+
+function fitView(){
+  const r=cv.getBoundingClientRect();
+  cv.width=r.width*devicePixelRatio;
+  cv.height=r.height*devicePixelRatio;
+  if(state.docW && !state.viewInit){
+    const z=Math.min(cv.width/state.docW, cv.height/state.docH)*0.9;
+    state.view={z, x:(cv.width-state.docW*z)/2, y:(cv.height-state.docH*z)/2};
+    state.viewInit=true;
+  }
+  draw();
+}
+window.addEventListener('resize', ()=>{state.viewInit=false;fitView();});
+
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const {x,y,z}=state.view;
+  ctx.save(); ctx.translate(x,y); ctx.scale(z,z);
+
+  if(state.docW){ // doc bounds
+    ctx.strokeStyle='#2b3252'; ctx.lineWidth=1.5/z;
+    ctx.setLineDash([8/z,6/z]);
+    ctx.strokeRect(0,0,state.docW,state.docH);
+    ctx.setLineDash([]);
+  }
+
+  for(const L of state.layers){
+    const k=L.scale? (1/L.scale):1;             // working -> layer original px
+    ctx.save();
+    ctx.translate(L.tx,L.ty); ctx.scale(L.s,L.s);
+
+    if(L.showArt && L.art){ try{ ctx.drawImage(L.art,0,0,L.origW,L.origH); }catch(e){} }
+
+    // preview marker frames on the selected layer even before vectorizing,
+    // so an upload always gives visible on-canvas confirmation
+    if(L.id===state.selId){
+      try{
+        if(L.lines && !L.traced){ ctx.globalAlpha=0.55; ctx.drawImage(L.lines,0,0,L.origW,L.origH); ctx.globalAlpha=1; }
+        if(L.dots && !L.traced){ ctx.globalAlpha=0.55; ctx.drawImage(L.dots,0,0,L.origW,L.origH); ctx.globalAlpha=1; }
+      }catch(e){ ctx.globalAlpha=1; }
+    }
+
+    if(L.curves.length){
+      ctx.lineWidth=Math.max(2.2,state.docW/450)/L.s;
+      ctx.strokeStyle = L.id===state.selId ? '#8dff5a' : '#e9e6dc';
+      ctx.lineCap='round';ctx.lineJoin='round';
+      ctx.beginPath();
+      for(const c of L.curves) for(const s of c.segs){
+        ctx.moveTo(s[0][0]*k,s[0][1]*k);
+        ctx.bezierCurveTo(s[1][0]*k,s[1][1]*k,s[2][0]*k,s[2][1]*k,s[3][0]*k,s[3][1]*k);
+      }
+      ctx.stroke();
+    }
+
+    if(L.id===state.selId){
+      // anchors
+      for(const a of L.anchors){
+        ctx.beginPath();
+        ctx.arc(a.x*k,a.y*k, 7/(z*L.s), 0, 7);
+        ctx.fillStyle='#ff5a3c'; ctx.fill();
+        ctx.lineWidth=2/(z*L.s); ctx.strokeStyle='#10131f'; ctx.stroke();
+      }
+      // selection frame
+      ctx.strokeStyle='#8dff5a'; ctx.lineWidth=1.5/(z*L.s);
+      ctx.setLineDash([10/(z*L.s),8/(z*L.s)]);
+      ctx.strokeRect(0,0,L.origW,L.origH);
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/* gestures: pan mode moves view / move mode moves selected layer */
+let touches=new Map();
+cv.addEventListener('pointerdown', e=>{
+  touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e=>{
+  if(!touches.has(e.pointerId)) return;
+  const t=touches.get(e.pointerId);
+  const dx=(e.clientX-t.x)*devicePixelRatio, dy=(e.clientY-t.y)*devicePixelRatio;
+  const sel=state.layers.find(l=>l.id===state.selId);
+
+  if(touches.size===1){
+    if(state.mode==='move' && sel){ sel.tx+=dx/state.view.z; sel.ty+=dy/state.view.z; }
+    else { state.view.x+=dx; state.view.y+=dy; }
+  } else if(touches.size===2){
+    const arr=[...touches.entries()];
+    const other=arr.find(([id])=>id!==e.pointerId)[1];
+    const d0=Math.hypot(t.x-other.x,t.y-other.y);
+    const d1=Math.hypot(e.clientX-other.x,e.clientY-other.y);
+    const f=d1/(d0||1);
+    if(state.mode==='move' && sel){
+      // scale layer about pinch center (doc space)
+      const cx=((e.clientX+other.x)/2*devicePixelRatio-state.view.x)/state.view.z;
+      const cy=((e.clientY+other.y)/2*devicePixelRatio-state.view.y)/state.view.z;
+      sel.tx=cx-(cx-sel.tx)*f; sel.ty=cy-(cy-sel.ty)*f; sel.s*=f;
+    } else {
+      const cx=(e.clientX+other.x)/2*devicePixelRatio, cy=(e.clientY+other.y)/2*devicePixelRatio;
+      state.view.x=cx-(cx-state.view.x)*f;
+      state.view.y=cy-(cy-state.view.y)*f;
+      state.view.z*=f;
+    }
+  }
+  touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  draw();
+});
+const endT=e=>touches.delete(e.pointerId);
+cv.addEventListener('pointerup',endT);
+cv.addEventListener('pointercancel',endT);
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const f=e.deltaY<0?1.1:0.9;
+  const cx=e.offsetX*devicePixelRatio, cy=e.offsetY*devicePixelRatio;
+  state.view.x=cx-(cx-state.view.x)*f;
+  state.view.y=cy-(cy-state.view.y)*f;
+  state.view.z*=f; draw();
+},{passive:false});
+
+$('mPan').addEventListener('click',()=>setMode('pan'));
+$('mMove').addEventListener('click',()=>setMode('move'));
+function setMode(m){
+  state.mode=m;
+  $('mPan').classList.toggle('on',m==='pan');
+  $('mMove').classList.toggle('on',m==='move');
+}
+
+/* ================= layers UI ================= */
+const layerList=$('layerList');
+$('bAddLayer').addEventListener('click',()=>{
+  const L=newLayer();
+  state.layers.push(L);
+  state.selId=L.id;
+  renderLayers();
+});
+
+function renderLayers(){
+  layerList.innerHTML='';
+  for(const L of state.layers){
+    const el=document.createElement('div');
+    el.className='layer'+(L.id===state.selId?' sel':'')+(L.traced?' traced':'');
+    el.innerHTML=`
+      <div class="layer-head" data-act="sel">
+        <div class="dot"></div>
+        <input value="${L.name.replace(/"/g,'&quot;')}" placeholder="part ${L.id}" data-act="name">
+        <button class="iconbtn" data-act="del" title="delete">&times;</button>
+      </div>
+      <div class="layer-body">
+        <div class="slots">
+          <div class="slot art ${L.art?'full':''}" data-act="art"><b>${L.art?'&#9646;':'+'}</b>art</div>
+          <div class="slot dots ${L.dots?'full':''}" data-act="dots"><b>${L.dots?'&#9679;':'+'}</b>dots</div>
+          <div class="slot lines ${L.lines?'full':''}" data-act="lines"><b>${L.lines?'&#12316;':'+'}</b>lines</div>
+        </div>
+        <div class="showart-row"><input type="checkbox" ${L.showArt?'checked':''} data-act="showart" id="sa${L.id}"><label for="sa${L.id}">show art underlay</label></div>
+        <div class="layer-stats">${L.stats||'load dots + lines, then vectorize'}</div>
+        <div class="layer-actions">
+          <button class="btn primary small" data-act="run" ${(L.dots&&L.lines)?'':'disabled'}>Vectorize</button>
+        </div>
+      </div>`;
+    el.addEventListener('click',e=>{
+      const act=e.target.closest('[data-act]')?.dataset.act;
+      if(!act)return;
+      if(act==='sel'&&e.target.tagName!=='INPUT'&&e.target.tagName!=='BUTTON'){
+        state.selId=L.id; renderLayers(); draw();
+      }
+      if(act==='del'){ state.layers=state.layers.filter(x=>x!==L); if(state.selId===L.id)state.selId=null; renderLayers(); draw(); updateExport(); }
+      if(['art','dots','lines'].includes(act)) pickFile(L,act);
+      if(act==='run') vectorizeLayer(L);
+    });
+    el.querySelector('[data-act=name]').addEventListener('input',e=>{L.name=e.target.value;});
+    el.querySelector('[data-act=name]').addEventListener('focus',()=>{state.selId=L.id;draw();});
+    el.querySelector('[data-act=showart]').addEventListener('change',e=>{L.showArt=e.target.checked;draw();});
+    layerList.appendChild(el);
+  }
+  $('emptyStage').style.display = state.layers.length? 'none':'flex';
+}
+
+/* file loading into slots */
+let pendingSlot=null;
+$('filePick').addEventListener('change',e=>{
+  const f=e.target.files[0]; e.target.value='';
+  if(!f||!pendingSlot)return;
+  const {L,slot}=pendingSlot; pendingSlot=null;
+  toast('loading '+slot+'…',8000);
+
+  // FileReader -> data URL instead of URL.createObjectURL: blob: URLs
+  // are tied to the document's origin and can silently fail to resolve
+  // when this file is viewed inside a sandboxed preview iframe. data:
+  // URIs carry their own bytes and don't have that dependency.
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const img=new Image();
+    img.onload=()=>{
+      L[slot]=img;
+      if(!L.origW){
+        L.origW=img.naturalWidth; L.origH=img.naturalHeight;
+        L.scale=Math.min(1,WORK_MAX/Math.max(L.origW,L.origH));
+        L.W=Math.round(L.origW*L.scale); L.H=Math.round(L.origH*L.scale);
+        if(!state.docW){ state.docW=L.origW; state.docH=L.origH; state.viewInit=false; fitView(); }
+      }
+      L.traced=false; L.stats='';
+      renderLayers(); draw();
+      toast(slot+' loaded ('+img.naturalWidth+'×'+img.naturalHeight+')');
+      // auto-run when both marker frames are in
+      if(L.dots&&L.lines) vectorizeLayer(L);
+    };
+    img.onerror=()=>{
+      toast('couldn’t decode that image — try exporting as PNG or JPG', 4000);
+    };
+    img.src=reader.result;
+  };
+  reader.onerror=()=>{
+    toast('couldn’t read that file — try a different image', 4000);
+  };
+  reader.readAsDataURL(f);
+});
+function pickFile(L,slot){ pendingSlot={L,slot}; $('filePick').click(); }
+
+/* ================= keying ================= */
+function toast(msg,ms=2000){
+  const s=$('status');s.textContent=msg;s.style.display='block';
+  clearTimeout(s._t);s._t=setTimeout(()=>s.style.display='none',ms);
+}
+['rKey','rDot','rErr'].forEach(id=>{
+  $(id).addEventListener('input',e=>{
+    $({rKey:'oKey',rDot:'oDot',rErr:'oErr'}[id]).textContent=e.target.value;
+  });
+});
+
+function imageDataOf(img,L){
+  const c=document.createElement('canvas');
+  c.width=L.W;c.height=L.H;
+  const g=c.getContext('2d',{willReadFrequently:true});
+  g.drawImage(img,0,0,L.W,L.H);
+  return g.getImageData(0,0,L.W,L.H);
+}
+
+/* HSV conversion for hue-based mark detection */
+function rgb2hsv(r,g,b){
+  r/=255;g/=255;b/=255;
+  const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;
+  let h=0;
+  if(d!==0){
+    if(max===r)h=60*(((g-b)/d)%6);
+    else if(max===g)h=60*((b-r)/d+2);
+    else h=60*((r-g)/d+4);
+  }
+  if(h<0)h+=360;
+  const s=max===0?0:d/max, v=max;
+  return{h,s,v};
+}
+function hueDist(a,b){ const d=Math.abs(a-b)%360; return d>180?360-d:d; }
+
+/* Key marks two ways depending on how the frame was exported:
+   - transparent background (Procreate layer export with nothing else
+     on it): every non-transparent pixel IS a mark, regardless of what
+     color you drew it in. Alpha alone settles it, no hue guessing.
+   - opaque background (flattened frame with the full artwork visible
+     underneath the marks): alpha can't help since everything's opaque,
+     so fall back to hue — asking "which pixels are red/green" — since
+     that's the only signal left to separate marks from art.
+   tol (15-160 from the UI slider) widens the hue window and loosens
+   the saturation/value floor as it increases; only relevant in the
+   opaque fallback case. */
+function hueMask(imgData,targetHue,tol){
+  const {data}=imgData, W=imgData.width,H=imgData.height,N=W*H;
+  const mask=new Uint8Array(N);
+  let hasAlpha=false;
+  for(let i=3;i<data.length;i+=4){ if(data[i]<250){hasAlpha=true;break;} }
+
+  if(hasAlpha){
+    // transparent-background export: alpha alone identifies every mark,
+    // any color is fine
+    for(let i=0;i<N;i++) mask[i]=data[i*4+3]>=40?1:0;
+    return mask;
+  }
+
+  // opaque fallback: distinguish marks from artwork by color
+  const hueWindow=16+tol*0.35;
+  const minSat=Math.max(0.22,0.5-tol*0.0015);
+  const minVal=0.18;
+  for(let i=0;i<N;i++){
+    const j=i*4;
+    const {h,s,v}=rgb2hsv(data[j],data[j+1],data[j+2]);
+    if(s>=minSat && v>=minVal && hueDist(h,targetHue)<=hueWindow) mask[i]=1;
+  }
+  return mask;
+}
+
+/* connected components -> centroids */
+function findBlobs(mask,W,H,minArea){
+  const seen=new Uint8Array(mask.length),out=[];
+  const qx=new Int32Array(mask.length),qy=new Int32Array(mask.length);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=y*W+x;
+    if(!mask[i]||seen[i])continue;
+    let head=0,tail=0;qx[tail]=x;qy[tail]=y;tail++;seen[i]=1;
+    let sx=0,sy=0,n=0;
+    while(head<tail){
+      const cx=qx[head],cy=qy[head];head++;
+      sx+=cx;sy+=cy;n++;
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+        const nx=cx+dx,ny=cy+dy;
+        if(nx<0||ny<0||nx>=W||ny>=H)continue;
+        const ni=ny*W+nx;
+        if(mask[ni]&&!seen[ni]){seen[ni]=1;qx[tail]=nx;qy[tail]=ny;tail++;}
+      }
+    }
+    if(n>=minArea&&n<W*H*0.2)out.push({x:sx/n,y:sy/n,area:n});
+  }
+  return out;
+}
+
+/* Zhang–Suen thinning */
+function thin(mask,W,H){
+  const m=Uint8Array.from(mask);
+  const idx=(x,y)=>y*W+x;
+  let changed=true,guard=0;
+  const toClear=[];
+  while(changed&&guard++<80){
+    changed=false;
+    for(let pass=0;pass<2;pass++){
+      toClear.length=0;
+      for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+        const i=idx(x,y);if(!m[i])continue;
+        const p2=m[idx(x,y-1)],p3=m[idx(x+1,y-1)],p4=m[idx(x+1,y)],p5=m[idx(x+1,y+1)],
+              p6=m[idx(x,y+1)],p7=m[idx(x-1,y+1)],p8=m[idx(x-1,y)],p9=m[idx(x-1,y-1)];
+        const B=p2+p3+p4+p5+p6+p7+p8+p9;
+        if(B<2||B>6)continue;
+        let A=0;const seq=[p2,p3,p4,p5,p6,p7,p8,p9,p2];
+        for(let k=0;k<8;k++)if(seq[k]===0&&seq[k+1]===1)A++;
+        if(A!==1)continue;
+        if(pass===0){if(p2*p4*p6!==0||p4*p6*p8!==0)continue;}
+        else{if(p2*p4*p8!==0||p2*p6*p8!==0)continue;}
+        toClear.push(i);
+      }
+      if(toClear.length){changed=true;for(const i of toClear)m[i]=0;}
+    }
+  }
+  return m;
+}
+
+/* skeleton -> ordered polylines */
+function tracePaths(skel,W,H){
+  const nb=(x,y)=>{
+    const out=[];
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+      if(!dx&&!dy)continue;
+      const nx=x+dx,ny=y+dy;
+      if(nx<0||ny<0||nx>=W||ny>=H)continue;
+      if(skel[ny*W+nx])out.push([nx,ny]);
+    }
+    return out;
+  };
+  const visited=new Uint8Array(skel.length);
+  const paths=[],pts=[];
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(skel[y*W+x])pts.push([x,y]);
+  const deg=p=>nb(p[0],p[1]).length;
+  const endpoints=pts.filter(p=>deg(p)===1);
+  const starts=[...endpoints,...pts];
+  for(const s of starts){
+    if(visited[s[1]*W+s[0]])continue;
+    const path=[s];visited[s[1]*W+s[0]]=1;
+    let cur=s,prev=null;
+    while(true){
+      const cand=nb(cur[0],cur[1]).filter(p=>!visited[p[1]*W+p[0]]);
+      if(!cand.length)break;
+      let next=cand[0];
+      if(prev&&cand.length>1){
+        const dx=cur[0]-prev[0],dy=cur[1]-prev[1];
+        let best=-2;
+        for(const c of cand){
+          const vx=c[0]-cur[0],vy=c[1]-cur[1];
+          const dot=(dx*vx+dy*vy)/(Math.hypot(dx,dy)*Math.hypot(vx,vy)||1);
+          if(dot>best){best=dot;next=c;}
+        }
+      }
+      visited[next[1]*W+next[0]]=1;
+      path.push(next);prev=cur;cur=next;
+    }
+    if(path.length<10)continue;
+    const a=path[0],b=path[path.length-1];
+    const closed=Math.hypot(a[0]-b[0],a[1]-b[1])<4&&path.length>30;
+    paths.push({pts:path,closed});
+  }
+  return paths;
+}
+
+/* ============ Schneider bezier fitting ============ */
+const V={sub:(a,b)=>[a[0]-b[0],a[1]-b[1]],add:(a,b)=>[a[0]+b[0],a[1]+b[1]],
+  scale:(a,s)=>[a[0]*s,a[1]*s],dot:(a,b)=>a[0]*b[0]+a[1]*b[1],
+  len:a=>Math.hypot(a[0],a[1]),
+  norm(a){const l=Math.hypot(a[0],a[1])||1;return[a[0]/l,a[1]/l];}};
+
+function fitCurveSeg(points,leftTan,rightTan,error){
+  if(points.length<2)return[];
+  if(points.length===2){
+    const d=V.len(V.sub(points[1],points[0]))/3;
+    return[[points[0],V.add(points[0],V.scale(leftTan,d)),V.add(points[1],V.scale(rightTan,d)),points[1]]];
+  }
+  return fitCubic(points,leftTan,rightTan,error,0);
+}
+function fitCubic(pts,lt,rt,err,depth){
+  if(depth>16){
+    const out=[];
+    for(let i=0;i<pts.length-1;i++){
+      const d=V.len(V.sub(pts[i+1],pts[i]))/3;
+      const t=V.norm(V.sub(pts[i+1],pts[i]));
+      out.push([pts[i],V.add(pts[i],V.scale(t,d)),V.add(pts[i+1],V.scale(t,-d)),pts[i+1]]);
+    }
+    return out;
+  }
+  let u=chordLen(pts);
+  let bez=genBezier(pts,u,lt,rt);
+  let [maxE,split]=maxError(pts,bez,u);
+  if(maxE<err)return[bez];
+  if(maxE<err*err){
+    for(let i=0;i<12;i++){
+      u=reparam(pts,u,bez);
+      bez=genBezier(pts,u,lt,rt);
+      [maxE,split]=maxError(pts,bez,u);
+      if(maxE<err)return[bez];
+    }
+  }
+  split=Math.max(1,Math.min(pts.length-2,split));
+  const centerTan=V.norm(V.sub(pts[split-1],pts[split+1]));
+  return[...fitCubic(pts.slice(0,split+1),lt,centerTan,err,depth+1),
+         ...fitCubic(pts.slice(split),V.scale(centerTan,-1),rt,err,depth+1)];
+}
+function chordLen(pts){
+  const u=[0];
+  for(let i=1;i<pts.length;i++)u.push(u[i-1]+V.len(V.sub(pts[i],pts[i-1])));
+  const t=u[u.length-1]||1;return u.map(v=>v/t);
+}
+function genBezier(pts,u,lt,rt){
+  const n=pts.length,first=pts[0],last=pts[n-1];
+  let c00=0,c01=0,c11=0,x0=0,x1=0;
+  for(let i=0;i<n;i++){
+    const t=u[i],b1=3*t*(1-t)**2,b2=3*t*t*(1-t),b0=(1-t)**3,b3=t**3;
+    const a0=V.scale(lt,b1),a1=V.scale(rt,b2);
+    c00+=V.dot(a0,a0);c01+=V.dot(a0,a1);c11+=V.dot(a1,a1);
+    const tmp=V.sub(pts[i],V.add(V.scale(first,b0+b1),V.scale(last,b2+b3)));
+    x0+=V.dot(a0,tmp);x1+=V.dot(a1,tmp);
+  }
+  const det=c00*c11-c01*c01;
+  let aL=0,aR=0;
+  if(Math.abs(det)>1e-12){aL=(c11*x0-c01*x1)/det;aR=(c00*x1-c01*x0)/det;}
+  const segLen=V.len(V.sub(last,first)),eps=1e-6*segLen;
+  if(aL<eps||aR<eps){aL=aR=segLen/3;}
+  return[first,V.add(first,V.scale(lt,aL)),V.add(last,V.scale(rt,aR)),last];
+}
+function bezPoint(b,t){
+  const mt=1-t;
+  return[mt**3*b[0][0]+3*mt*mt*t*b[1][0]+3*mt*t*t*b[2][0]+t**3*b[3][0],
+         mt**3*b[0][1]+3*mt*mt*t*b[1][1]+3*mt*t*t*b[2][1]+t**3*b[3][1]];
+}
+function maxError(pts,bez,u){
+  let max=0,split=pts.length>>1;
+  for(let i=1;i<pts.length-1;i++){
+    const p=bezPoint(bez,u[i]);
+    const d=(p[0]-pts[i][0])**2+(p[1]-pts[i][1])**2;
+    if(d>max){max=d;split=i;}
+  }
+  return[Math.sqrt(max),split];
+}
+function reparam(pts,u,bez){
+  return u.map((t,i)=>{
+    const d=bezPoint(bez,t),q1=bezDeriv(bez,t),q2=bezDeriv2(bez,t);
+    const dv=[d[0]-pts[i][0],d[1]-pts[i][1]];
+    const num=dv[0]*q1[0]+dv[1]*q1[1];
+    const den=q1[0]**2+q1[1]**2+dv[0]*q2[0]+dv[1]*q2[1];
+    return den===0?t:Math.min(1,Math.max(0,t-num/den));
+  });
+}
+function bezDeriv(b,t){
+  const mt=1-t;
+  return[3*mt*mt*(b[1][0]-b[0][0])+6*mt*t*(b[2][0]-b[1][0])+3*t*t*(b[3][0]-b[2][0]),
+         3*mt*mt*(b[1][1]-b[0][1])+6*mt*t*(b[2][1]-b[1][1])+3*t*t*(b[3][1]-b[2][1])];
+}
+function bezDeriv2(b,t){
+  const mt=1-t;
+  return[6*mt*(b[2][0]-2*b[1][0]+b[0][0])+6*t*(b[3][0]-2*b[2][0]+b[1][0]),
+         6*mt*(b[2][1]-2*b[1][1]+b[0][1])+6*t*(b[3][1]-2*b[2][1]+b[1][1])];
+}
+
+/* ================= per-layer pipeline ================= */
+function vectorizeLayer(L){
+  if(!L.dots||!L.lines)return;
+  toast('vectorizing '+(L.name||'part '+L.id)+'…',60000);
+  setTimeout(()=>{
+    const tol=+$('rKey').value, minDot=+$('rDot').value, err=+$('rErr').value;
+
+    const dotsID=imageDataOf(L.dots,L);
+    const linesID=imageDataOf(L.lines,L);
+
+    const dotMask=hueMask(dotsID,8,tol);      // red/orange anchor dots
+    L.anchors=findBlobs(dotMask,L.W,L.H,minDot);
+
+    const lineMask=hueMask(linesID,100,tol);  // neon-green guide lines
+    const skel=thin(lineMask,L.W,L.H);
+    L.paths=tracePaths(skel,L.W,L.H);
+
+    // fit
+    L.curves=[];
+    let totalSegs=0,used=0;
+    for(const path of L.paths){
+      const pts=path.pts;
+      const hits=[];
+      for(const d of L.anchors){
+        let best=1e9,bi=-1;
+        for(let i=0;i<pts.length;i+=2){
+          const dd=(pts[i][0]-d.x)**2+(pts[i][1]-d.y)**2;
+          if(dd<best){best=dd;bi=i;}
+        }
+        if(Math.sqrt(best)<Math.max(14,L.W*0.02))hits.push({i:bi});
+      }
+      hits.sort((a,b)=>a.i-b.i);
+      const anchors=[];
+      for(const h of hits)if(!anchors.length||h.i-anchors[anchors.length-1].i>6)anchors.push(h);
+      used+=anchors.length;
+
+      let cuts=[0,...anchors.map(a=>a.i),pts.length-1];
+      cuts=[...new Set(cuts)].sort((a,b)=>a-b);
+
+      const tanAt=(i,dir)=>{
+        const k=Math.min(8,Math.floor(pts.length/4)||1);
+        const j=Math.max(0,Math.min(pts.length-1,i+dir*k));
+        return V.norm(V.sub(pts[j],pts[i]));
+      };
+
+      const segsOut=[];
+      for(let c=0;c<cuts.length-1;c++){
+        const seg=pts.slice(cuts[c],cuts[c+1]+1);
+        if(seg.length<2)continue;
+        const lt=tanAt(cuts[c],+1);
+        const rt=tanAt(cuts[c+1],-1);
+        segsOut.push(...fitCurveSeg(seg,lt,rt,err));
+      }
+      if(segsOut.length){L.curves.push({segs:segsOut,closed:path.closed});totalSegs+=segsOut.length;}
+    }
+
+    L.traced=L.curves.length>0;
+    L.stats = L.traced
+      ? `anchors: <b>${L.anchors.length}</b> (${used} on-path) &middot; paths: <b>${L.paths.length}</b> &middot; segments: <b>${totalSegs}</b>`
+      : `<span class="warn">nothing keyed — raise threshold, check frames aren't blank</span>`;
+    renderLayers(); draw(); updateExport();
+    toast(L.traced? `${L.name||'part '+L.id}: ${totalSegs} segments` : 'nothing keyed — raise threshold');
+  },30);
+}
+
+/* re-run selected layer when sliders settle */
+let slideT=null;
+['rKey','rDot','rErr'].forEach(id=>{
+  $(id).addEventListener('change',()=>{
+    clearTimeout(slideT);
+    slideT=setTimeout(()=>{
+      const L=state.layers.find(l=>l.id===state.selId);
+      if(L&&L.dots&&L.lines)vectorizeLayer(L);
+    },120);
+  });
+});
+
+/* ================= export ================= */
+function updateExport(){
+  const has=state.layers.some(l=>l.curves.length);
+  $('bSvg').disabled=$('bCopy').disabled=!has;
+}
+function buildSVG(){
+  // doc bounds = union of transformed layer boxes
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  for(const L of state.layers){
+    if(!L.curves.length)continue;
+    minX=Math.min(minX,L.tx);minY=Math.min(minY,L.ty);
+    maxX=Math.max(maxX,L.tx+L.origW*L.s);
+    maxY=Math.max(maxY,L.ty+L.origH*L.s);
+  }
+  if(minX>maxX){minX=0;minY=0;maxX=state.docW||1000;maxY=state.docH||1000;}
+  const sw=Math.max(2,(maxX-minX)/500).toFixed(1);
+  let groups='';
+  state.layers.forEach((L,li)=>{
+    if(!L.curves.length)return;
+    const k=1/L.scale;
+    const f=n=>n.toFixed(2);
+    let paths='';
+    L.curves.forEach((c,ci)=>{
+      let d='',last=null;
+      for(const seg of c.segs){
+        const p0=`${f(seg[0][0]*k)} ${f(seg[0][1]*k)}`;
+        if(!last||last!==p0)d+=`M ${p0} `;
+        d+=`C ${f(seg[1][0]*k)} ${f(seg[1][1]*k)}, ${f(seg[2][0]*k)} ${f(seg[2][1]*k)}, ${f(seg[3][0]*k)} ${f(seg[3][1]*k)} `;
+        last=`${f(seg[3][0]*k)} ${f(seg[3][1]*k)}`;
+      }
+      if(c.closed)d+='Z';
+      paths+=`    <path d="${d.trim()}"/>\n`;
+    });
+    const name=(L.name||'part-'+L.id).toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
+    groups+=`  <g id="${name}" transform="translate(${f(L.tx)} ${f(L.ty)}) scale(${L.s.toFixed(4)})">\n${paths}  </g>\n`;
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX.toFixed(1)} ${minY.toFixed(1)} ${(maxX-minX).toFixed(1)} ${(maxY-minY).toFixed(1)}" fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">\n${groups}</svg>`;
+}
+$('bSvg').addEventListener('click',()=>{
+  const blob=new Blob([buildSVG()],{type:'image/svg+xml'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download='keyline.svg';a.click();
+  toast('SVG downloaded');
+});
+$('bCopy').addEventListener('click',async()=>{
+  await navigator.clipboard.writeText(buildSVG());
+  toast('SVG copied');
+});
+
+renderLayers();
+fitView();
+</script>
+</body>
+</html>
