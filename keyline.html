@@ -116,6 +116,19 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;heigh
 input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:2px}
 input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--anchor);border:3px solid var(--ink)}
 
+.ctl{
+  width:100%;padding:11px 12px;border-radius:var(--radius);border:1px solid var(--line);
+  background:var(--panel-2);color:var(--bone);font-family:'IBM Plex Mono',monospace;
+  font-size:11px;letter-spacing:.04em;outline:none;
+  -webkit-appearance:none;appearance:none;
+}
+.ctl::placeholder{color:var(--dim)}
+select.ctl{
+  background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),linear-gradient(135deg,var(--dim) 50%,transparent 50%);
+  background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;
+  background-size:5px 5px;background-repeat:no-repeat;
+}
+
 input[type=file]{display:none}
 
 @media (max-width:760px){
@@ -174,7 +187,12 @@ input[type=file]{display:none}
     <button class="btn ghost" id="bCopy" disabled>Copy SVG code</button>
 
     <div class="sect-title">Project</div>
-    <button class="btn danger" id="bClear">Clear saved project</button>
+    <input class="ctl" id="projName" placeholder="untitled project">
+    <select class="ctl" id="projSel"></select>
+    <div style="display:flex;gap:6px">
+      <button class="btn ghost small" id="bNewProj" style="flex:1">+ New project</button>
+      <button class="btn danger small" id="bDelProj" style="flex:1">Delete</button>
+    </div>
   </div>
 </main>
 </div>
@@ -400,7 +418,7 @@ function renderLayers(){
       if(act==='del'){
         state.layers=state.layers.filter(x=>x!==L);
         if(state.selId===L.id)state.selId=null;
-        ['art','dots','lines'].forEach(sl=>idbDel('img:'+L.id+':'+sl));
+        ['art','dots','lines'].forEach(sl=>idbDel(imgKey(L.id,sl)));
         scheduleSave();
         renderLayers(); draw(); updateExport();
       }
@@ -442,7 +460,7 @@ $('filePick').addEventListener('change',e=>{
       L.traced=false; L.stats='';
       renderLayers(); draw();
       toast(slot+' loaded ('+img.naturalWidth+'×'+img.naturalHeight+')');
-      idbPut('img:'+L.id+':'+slot, f); scheduleSave();
+      idbPut(imgKey(L.id,slot), f); scheduleSave();
       // auto-run when both marker frames are in
       if(L.dots&&L.lines) vectorizeLayer(L);
     };
@@ -907,13 +925,18 @@ $('bCopy').addEventListener('click',async()=>{
 });
 
 /* ================= project persistence (IndexedDB) =================
-   Everything auto-saves on-device: each frame's original file blob is
-   stored under img:<layerId>:<slot> at upload time, and one 'meta'
-   record carries all serializable layer state (anchors/paths/curves/
-   transforms/sliders), debounce-written after every meaningful change.
-   Restored on page load, so a refresh — or iOS killing the PWA in the
-   background — doesn't lose the project. Every call degrades silently
-   to in-memory-only if IndexedDB is unavailable (private browsing). */
+   Everything auto-saves on-device, with multiple named projects. Keys:
+     'projects'                      -> [{id,name,updated}] index
+     'cur'                           -> active project id
+     'proj:<pid>:meta'               -> all serializable layer state
+     'proj:<pid>:img:<layerId>:<slot>' -> frame's original file blob
+   Frame blobs are written at upload time; the meta record is
+   debounce-written after every meaningful change. The active project
+   is restored on page load, so a refresh — or iOS killing the PWA in
+   the background — doesn't lose work. Pre-multi-project saves (bare
+   'meta' + 'img:*' keys) are migrated to project 1 on first load.
+   Every call degrades silently to in-memory-only if IndexedDB is
+   unavailable (private browsing). */
 let _db=null,_dbDead=false;
 function openDB(){
   return new Promise(res=>{
@@ -941,12 +964,21 @@ function idbOp(mode,fn){
 const idbPut=(k,v)=>idbOp('readwrite',s=>s.put(v,k));
 const idbGet=k=>idbOp('readonly',s=>s.get(k));
 const idbDel=k=>idbOp('readwrite',s=>s.delete(k));
-const idbClear=()=>idbOp('readwrite',s=>s.clear());
+const idbKeys=()=>idbOp('readonly',s=>s.getAllKeys());
+
+let projId=1, projects=[], loadSeq=0;
+const imgKey=(layerId,slot)=>'proj:'+projId+':img:'+layerId+':'+slot;
+const projLabel=p=>p.name||('project '+p.id);
+function saveProjectsIndex(){ idbPut('projects',projects); idbPut('cur',projId); }
 
 let saveT=null;
 function scheduleSave(){ clearTimeout(saveT); saveT=setTimeout(saveProject,300); }
+function flushSave(){ if(saveT){ clearTimeout(saveT); saveProject(); } }
 function saveProject(){
-  idbPut('meta',{
+  saveT=null;
+  const p=projects.find(x=>x.id===projId);
+  if(p){ p.updated=Date.now(); saveProjectsIndex(); }
+  idbPut('proj:'+projId+':meta',{
     v:1, uid, selId:state.selId, docW:state.docW, docH:state.docH,
     sliders:{key:+$('rKey').value, dot:+$('rDot').value, err:+$('rErr').value},
     layers:state.layers.map(L=>({
@@ -966,12 +998,22 @@ function blobToImage(blob){
     r.readAsDataURL(blob); // same data-URL rationale as the upload path
   });
 }
-async function restoreProject(){
+function resetState(){
+  clearTimeout(saveT); saveT=null;
+  state.layers=[]; state.selId=null; state.docW=0; state.docH=0; state.viewInit=false;
+  renderLayers(); draw(); updateExport();
+}
+
+async function loadProject(pid){
+  const my=++loadSeq;
+  projId=pid; idbPut('cur',pid);
   try{
-    const meta=await idbGet('meta');
-    if(!meta||!meta.layers||!meta.layers.length)return;
-    if(state.layers.length)return; // user already started fresh work
-    toast('restoring project…',20000);
+    const meta=await idbGet('proj:'+pid+':meta');
+    if(!meta||!meta.layers||!meta.layers.length){
+      if(my===loadSeq){ renderLayers(); draw(); updateExport(); }
+      return;
+    }
+    toast('loading project…',20000);
     const layers=[];
     for(const m of meta.layers){
       const L=newLayer();
@@ -982,12 +1024,12 @@ async function restoreProject(){
         traced:!!m.traced, stats:m.stats||'',
       });
       for(const slot of m.frames||[]){
-        const blob=await idbGet('img:'+m.id+':'+slot);
+        const blob=await idbGet('proj:'+pid+':img:'+m.id+':'+slot);
         if(blob){ try{ L[slot]=await blobToImage(blob); }catch(e){} }
       }
       layers.push(L);
     }
-    if(state.layers.length)return; // re-check after async loads
+    if(my!==loadSeq)return; // a newer load/new-project superseded this one
     state.layers=layers;
     uid=Math.max(uid,meta.uid||1);
     state.selId=meta.selId??null;
@@ -999,23 +1041,104 @@ async function restoreProject(){
     }
     state.viewInit=false;
     renderLayers(); fitView(); updateExport();
-    toast('project restored');
-  }catch(e){ toast('couldn’t restore saved project',3000); }
+    const p=projects.find(x=>x.id===pid);
+    toast((p?projLabel(p):'project')+' restored');
+  }catch(e){ toast('couldn’t load saved project',3000); }
 }
 
-$('bClear').addEventListener('click',()=>{
-  if(!confirm('Clear the saved project and all parts?'))return;
-  clearTimeout(saveT);
-  idbClear();
-  state.layers=[]; state.selId=null; state.docW=0; state.docH=0; state.viewInit=false;
-  renderLayers(); draw(); updateExport();
-  toast('project cleared');
+/* project switcher UI */
+function refreshProjUI(){
+  const sel=$('projSel'); sel.innerHTML='';
+  for(const p of [...projects].sort((a,b)=>a.id-b.id)){
+    const o=document.createElement('option');
+    o.value=p.id; o.textContent=projLabel(p);
+    if(p.id===projId)o.selected=true;
+    sel.appendChild(o);
+  }
+  const p=projects.find(x=>x.id===projId);
+  $('projName').value=p&&p.name?p.name:'';
+}
+$('projSel').addEventListener('change',async e=>{
+  const pid=+e.target.value;
+  if(pid===projId)return;
+  flushSave();
+  resetState();
+  await loadProject(pid);
+  refreshProjUI();
 });
+let nameT=null;
+$('projName').addEventListener('input',e=>{
+  const p=projects.find(x=>x.id===projId);
+  if(!p)return;
+  p.name=e.target.value;
+  const o=$('projSel').querySelector('option[value="'+projId+'"]');
+  if(o)o.textContent=projLabel(p);
+  clearTimeout(nameT); nameT=setTimeout(saveProjectsIndex,300);
+});
+$('bNewProj').addEventListener('click',()=>{
+  flushSave();
+  const pid=projects.reduce((m,p)=>Math.max(m,p.id),0)+1;
+  projects.push({id:pid,name:'',updated:Date.now()});
+  projId=pid;
+  loadSeq++; // cancel any in-flight load
+  resetState();
+  saveProjectsIndex();
+  refreshProjUI();
+  toast('new project — add a part to begin');
+});
+$('bDelProj').addEventListener('click',async()=>{
+  const p=projects.find(x=>x.id===projId);
+  if(!confirm('Delete “'+projLabel(p||{id:projId})+'” and all its parts?'))return;
+  clearTimeout(saveT); saveT=null;
+  const pid=projId;
+  projects=projects.filter(x=>x.id!==pid);
+  const keys=(await idbKeys())||[];
+  for(const k of keys)if(String(k).startsWith('proj:'+pid+':'))idbDel(k);
+  if(!projects.length)projects=[{id:pid+1,name:'',updated:Date.now()}];
+  const next=[...projects].sort((a,b)=>(b.updated||0)-(a.updated||0))[0];
+  projId=next.id;
+  saveProjectsIndex();
+  resetState();
+  await loadProject(next.id);
+  refreshProjUI();
+  toast('project deleted');
+});
+
+/* migrate pre-multi-project saves (bare 'meta' + 'img:*') to project 1 */
+async function migrateLegacy(){
+  const legacy=await idbGet('meta');
+  if(!legacy)return;
+  await idbPut('proj:1:meta',legacy);
+  const keys=(await idbKeys())||[];
+  for(const k of keys){
+    const ks=String(k);
+    if(ks.startsWith('img:')){
+      const v=await idbGet(k);
+      if(v!==undefined)await idbPut('proj:1:'+ks,v);
+      await idbDel(k);
+    }
+  }
+  await idbDel('meta');
+  if(!(await idbGet('projects')))await idbPut('projects',[{id:1,name:'',updated:Date.now()}]);
+  await idbPut('cur',1);
+}
 
 renderLayers();
 fitView();
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
-restoreProject();
+(async function initProjects(){
+  try{
+    await migrateLegacy();
+    projects=(await idbGet('projects'))||[];
+    let cur=await idbGet('cur');
+    if(!projects.length){ projects=[{id:1,name:'',updated:Date.now()}]; cur=1; saveProjectsIndex(); }
+    if(!projects.some(p=>p.id===cur))cur=projects[0].id;
+    projId=cur;
+    refreshProjUI();
+    await loadProject(cur);
+    refreshProjUI();
+  }catch(e){}
+})();
 </script>
 </body>
 </html>
