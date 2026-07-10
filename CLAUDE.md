@@ -70,13 +70,27 @@ link only).
   skeleton points (`tanAt`), not from the anchor markup itself — there's no
   current mechanism for the artist to mark "smooth" vs. "corner" anchors
   differently (see Known Issues / earlier design intent below).
+- **Auto-fill** (`polygonInteriorPoint`/`artPixelColor`): for each closed
+  traced shape, finds a point guaranteed to be inside it via a
+  horizontal-scanline test (centroid alone can land outside on concave
+  shapes), then samples the artist's own `art` frame at that point and
+  bakes the result in as the shape's fill — both in the canvas preview and
+  the exported SVG (`fill="none"` stays the default for open paths). No
+  manual color-picker override exists yet; if the sampled point lands on a
+  boundary/anti-aliased pixel or a sliver shape, the fill can pick up the
+  wrong region's color.
 
 ## Known issues / open items
 
 - **Branching guide lines aren't supported.** If a Part's guide line has a
   Y-split or crosses itself, the skeleton becomes a graph rather than a
   path, and the greedy walk in `tracePaths` will pick one branch and
-  silently drop the other. No detection/warning exists for this yet.
+  silently drop the other. Confirmed in practice: a hair part with
+  multiple crossing strands fragmented into 8 disconnected paths with a
+  garbled fit, while splitting each strand into its own Part traced
+  cleanly. No detection/warning exists yet for when a part's guide line
+  fragments into more paths than expected — worth adding given how easy
+  this mistake is to make.
 - **No corner-vs-smooth anchor distinction.** An earlier design pass
   explored two dot colors (red = hard corner, blue = tangent-continuous
   smooth point) so fitted curves could match the artist's intent at each

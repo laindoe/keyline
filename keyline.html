@@ -252,6 +252,16 @@ function draw(){
     }
 
     if(L.curves.length){
+      for(const c of L.curves){
+        if(!c.fill)continue;
+        ctx.beginPath();
+        for(const s of c.segs){
+          ctx.moveTo(s[0][0]*k,s[0][1]*k);
+          ctx.bezierCurveTo(s[1][0]*k,s[1][1]*k,s[2][0]*k,s[2][1]*k,s[3][0]*k,s[3][1]*k);
+        }
+        if(c.closed)ctx.closePath();
+        ctx.fillStyle=c.fill; ctx.fill();
+      }
       ctx.lineWidth=Math.max(2.2,state.docW/450)/L.s;
       ctx.strokeStyle = L.id===state.selId ? '#8dff5a' : '#e9e6dc';
       ctx.lineCap='round';ctx.lineJoin='round';
@@ -405,6 +415,7 @@ $('filePick').addEventListener('change',e=>{
     const img=new Image();
     img.onload=()=>{
       L[slot]=img;
+      if(slot==='art') L._artCv=null;
       if(!L.origW){
         L.origW=img.naturalWidth; L.origH=img.naturalHeight;
         L.scale=Math.min(1,WORK_MAX/Math.max(L.origW,L.origH));
@@ -696,6 +707,51 @@ function bezDeriv2(b,t){
          6*mt*(b[2][1]-2*b[1][1]+b[0][1])+6*t*(b[3][1]-2*b[2][1]+b[1][1])];
 }
 
+/* ============ auto-fill: sample the artist's own colored art ============
+   For a closed traced shape, find a point guaranteed to be inside it (not
+   just its centroid, which can fall outside on concave shapes) via a
+   horizontal-scanline test, then sample the art frame at that point. This
+   is how KEYLINE colors shapes without any manual paint-bucket step: the
+   color data already exists in the art the artist uploaded. */
+function polygonInteriorPoint(pts){
+  let minY=Infinity,maxY=-Infinity;
+  for(const p of pts){ if(p[1]<minY)minY=p[1]; if(p[1]>maxY)maxY=p[1]; }
+  if(minY>=maxY)return null;
+  const rows=9;
+  let best=null,bestW=-1;
+  for(let r=1;r<rows;r++){
+    const y=minY+(maxY-minY)*r/rows;
+    const xs=[];
+    for(let i=0;i<pts.length;i++){
+      const a=pts[i], b=pts[(i+1)%pts.length];
+      if((a[1]<=y&&b[1]>y)||(b[1]<=y&&a[1]>y)){
+        const t=(y-a[1])/(b[1]-a[1]);
+        xs.push(a[0]+t*(b[0]-a[0]));
+      }
+    }
+    xs.sort((a,b)=>a-b);
+    for(let i=0;i+1<xs.length;i+=2){
+      const w=xs[i+1]-xs[i];
+      if(w>bestW){bestW=w;best={x:(xs[i]+xs[i+1])/2,y};}
+    }
+  }
+  return best;
+}
+function artPixelColor(L,wx,wy){
+  if(!L.art)return null;
+  if(!L._artCv){
+    const c=document.createElement('canvas');
+    c.width=L.origW;c.height=L.origH;
+    c.getContext('2d',{willReadFrequently:true}).drawImage(L.art,0,0,L.origW,L.origH);
+    L._artCv=c;
+  }
+  const x=Math.max(0,Math.min(L.origW-1,Math.round(wx/L.scale)));
+  const y=Math.max(0,Math.min(L.origH-1,Math.round(wy/L.scale)));
+  const d=L._artCv.getContext('2d').getImageData(x,y,1,1).data;
+  if(d[3]<10)return null; // sampled a transparent spot, nothing to fill with
+  return '#'+[d[0],d[1],d[2]].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+
 /* ================= per-layer pipeline ================= */
 function vectorizeLayer(L){
   if(!L.dots||!L.lines)return;
@@ -749,7 +805,15 @@ function vectorizeLayer(L){
         const rt=tanAt(cuts[c+1],-1);
         segsOut.push(...fitCurveSeg(seg,lt,rt,err));
       }
-      if(segsOut.length){L.curves.push({segs:segsOut,closed:path.closed});totalSegs+=segsOut.length;}
+      if(segsOut.length){
+        let fill=null;
+        if(path.closed){
+          const ip=polygonInteriorPoint(pts);
+          if(ip)fill=artPixelColor(L,ip.x,ip.y);
+        }
+        L.curves.push({segs:segsOut,closed:path.closed,fill});
+        totalSegs+=segsOut.length;
+      }
     }
 
     L.traced=L.curves.length>0;
@@ -804,7 +868,8 @@ function buildSVG(){
         last=`${f(seg[3][0]*k)} ${f(seg[3][1]*k)}`;
       }
       if(c.closed)d+='Z';
-      paths+=`    <path d="${d.trim()}"/>\n`;
+      const fillAttr=c.fill?` fill="${c.fill}"`:' fill="none"';
+      paths+=`    <path d="${d.trim()}"${fillAttr}/>\n`;
     });
     const name=(L.name||'part-'+L.id).toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
     groups+=`  <g id="${name}" transform="translate(${f(L.tx)} ${f(L.ty)}) scale(${L.s.toFixed(4)})">\n${paths}  </g>\n`;
