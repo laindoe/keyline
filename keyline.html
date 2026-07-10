@@ -172,6 +172,9 @@ input[type=file]{display:none}
     <div class="sect-title">Export</div>
     <button class="btn primary" id="bSvg" disabled>Download composed SVG</button>
     <button class="btn ghost" id="bCopy" disabled>Copy SVG code</button>
+
+    <div class="sect-title">Project</div>
+    <button class="btn danger" id="bClear">Clear saved project</button>
   </div>
 </main>
 </div>
@@ -335,7 +338,7 @@ cv.addEventListener('pointermove', e=>{
   touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
   draw();
 });
-const endT=e=>touches.delete(e.pointerId);
+const endT=e=>{ touches.delete(e.pointerId); if(state.mode==='move')scheduleSave(); };
 cv.addEventListener('pointerup',endT);
 cv.addEventListener('pointercancel',endT);
 cv.addEventListener('wheel',e=>{
@@ -362,6 +365,7 @@ $('bAddLayer').addEventListener('click',()=>{
   state.layers.push(L);
   state.selId=L.id;
   renderLayers();
+  scheduleSave();
 });
 
 function renderLayers(){
@@ -393,13 +397,19 @@ function renderLayers(){
       if(act==='sel'&&e.target.tagName!=='INPUT'&&e.target.tagName!=='BUTTON'){
         state.selId=L.id; renderLayers(); draw();
       }
-      if(act==='del'){ state.layers=state.layers.filter(x=>x!==L); if(state.selId===L.id)state.selId=null; renderLayers(); draw(); updateExport(); }
+      if(act==='del'){
+        state.layers=state.layers.filter(x=>x!==L);
+        if(state.selId===L.id)state.selId=null;
+        ['art','dots','lines'].forEach(sl=>idbDel('img:'+L.id+':'+sl));
+        scheduleSave();
+        renderLayers(); draw(); updateExport();
+      }
       if(['art','dots','lines'].includes(act)) pickFile(L,act);
       if(act==='run') vectorizeLayer(L);
     });
-    el.querySelector('[data-act=name]').addEventListener('input',e=>{L.name=e.target.value;});
+    el.querySelector('[data-act=name]').addEventListener('input',e=>{L.name=e.target.value;scheduleSave();});
     el.querySelector('[data-act=name]').addEventListener('focus',()=>{state.selId=L.id;draw();});
-    el.querySelector('[data-act=showart]').addEventListener('change',e=>{L.showArt=e.target.checked;draw();});
+    el.querySelector('[data-act=showart]').addEventListener('change',e=>{L.showArt=e.target.checked;draw();scheduleSave();});
     layerList.appendChild(el);
   }
   $('emptyStage').style.display = state.layers.length? 'none':'flex';
@@ -432,6 +442,7 @@ $('filePick').addEventListener('change',e=>{
       L.traced=false; L.stats='';
       renderLayers(); draw();
       toast(slot+' loaded ('+img.naturalWidth+'×'+img.naturalHeight+')');
+      idbPut('img:'+L.id+':'+slot, f); scheduleSave();
       // auto-run when both marker frames are in
       if(L.dots&&L.lines) vectorizeLayer(L);
     };
@@ -827,7 +838,7 @@ function vectorizeLayer(L){
     L.stats = L.traced
       ? `anchors: <b>${L.anchors.length}</b> (${used} on-path) &middot; paths: <b>${L.paths.length}</b> &middot; segments: <b>${totalSegs}</b>`
       : `<span class="warn">nothing keyed — raise threshold, check frames aren't blank</span>`;
-    renderLayers(); draw(); updateExport();
+    renderLayers(); draw(); updateExport(); scheduleSave();
     toast(L.traced? `${L.name||'part '+L.id}: ${totalSegs} segments` : 'nothing keyed — raise threshold');
   },30);
 }
@@ -836,6 +847,7 @@ function vectorizeLayer(L){
 let slideT=null;
 ['rKey','rDot','rErr'].forEach(id=>{
   $(id).addEventListener('change',()=>{
+    scheduleSave();
     clearTimeout(slideT);
     slideT=setTimeout(()=>{
       const L=state.layers.find(l=>l.id===state.selId);
@@ -894,8 +906,116 @@ $('bCopy').addEventListener('click',async()=>{
   toast('SVG copied');
 });
 
+/* ================= project persistence (IndexedDB) =================
+   Everything auto-saves on-device: each frame's original file blob is
+   stored under img:<layerId>:<slot> at upload time, and one 'meta'
+   record carries all serializable layer state (anchors/paths/curves/
+   transforms/sliders), debounce-written after every meaningful change.
+   Restored on page load, so a refresh — or iOS killing the PWA in the
+   background — doesn't lose the project. Every call degrades silently
+   to in-memory-only if IndexedDB is unavailable (private browsing). */
+let _db=null,_dbDead=false;
+function openDB(){
+  return new Promise(res=>{
+    if(_db)return res(_db);
+    if(_dbDead||!window.indexedDB)return res(null);
+    let rq;
+    try{ rq=indexedDB.open('keyline',1); }
+    catch(e){ _dbDead=true; return res(null); }
+    rq.onupgradeneeded=()=>rq.result.createObjectStore('project');
+    rq.onsuccess=()=>{_db=rq.result;res(_db);};
+    rq.onerror=()=>{_dbDead=true;res(null);};
+  });
+}
+function idbOp(mode,fn){
+  return openDB().then(d=>new Promise(res=>{
+    if(!d)return res(undefined);
+    try{
+      const tx=d.transaction('project',mode);
+      const rq=fn(tx.objectStore('project'));
+      tx.oncomplete=()=>res(rq?rq.result:undefined);
+      tx.onerror=tx.onabort=()=>res(undefined);
+    }catch(e){res(undefined);}
+  }));
+}
+const idbPut=(k,v)=>idbOp('readwrite',s=>s.put(v,k));
+const idbGet=k=>idbOp('readonly',s=>s.get(k));
+const idbDel=k=>idbOp('readwrite',s=>s.delete(k));
+const idbClear=()=>idbOp('readwrite',s=>s.clear());
+
+let saveT=null;
+function scheduleSave(){ clearTimeout(saveT); saveT=setTimeout(saveProject,300); }
+function saveProject(){
+  idbPut('meta',{
+    v:1, uid, selId:state.selId, docW:state.docW, docH:state.docH,
+    sliders:{key:+$('rKey').value, dot:+$('rDot').value, err:+$('rErr').value},
+    layers:state.layers.map(L=>({
+      id:L.id, name:L.name, origW:L.origW, origH:L.origH, scale:L.scale, W:L.W, H:L.H,
+      anchors:L.anchors, paths:L.paths, curves:L.curves,
+      tx:L.tx, ty:L.ty, s:L.s, showArt:L.showArt, traced:L.traced, stats:L.stats||'',
+      frames:['art','dots','lines'].filter(k=>L[k]),
+    })),
+  });
+}
+
+function blobToImage(blob){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>{ const img=new Image(); img.onload=()=>res(img); img.onerror=rej; img.src=r.result; };
+    r.onerror=rej;
+    r.readAsDataURL(blob); // same data-URL rationale as the upload path
+  });
+}
+async function restoreProject(){
+  try{
+    const meta=await idbGet('meta');
+    if(!meta||!meta.layers||!meta.layers.length)return;
+    if(state.layers.length)return; // user already started fresh work
+    toast('restoring project…',20000);
+    const layers=[];
+    for(const m of meta.layers){
+      const L=newLayer();
+      Object.assign(L,{
+        id:m.id, name:m.name||'', origW:m.origW, origH:m.origH, scale:m.scale, W:m.W, H:m.H,
+        anchors:m.anchors||[], paths:m.paths||[], curves:m.curves||[],
+        tx:m.tx||0, ty:m.ty||0, s:m.s||1, showArt:m.showArt!==false,
+        traced:!!m.traced, stats:m.stats||'',
+      });
+      for(const slot of m.frames||[]){
+        const blob=await idbGet('img:'+m.id+':'+slot);
+        if(blob){ try{ L[slot]=await blobToImage(blob); }catch(e){} }
+      }
+      layers.push(L);
+    }
+    if(state.layers.length)return; // re-check after async loads
+    state.layers=layers;
+    uid=Math.max(uid,meta.uid||1);
+    state.selId=meta.selId??null;
+    state.docW=meta.docW||0; state.docH=meta.docH||0;
+    if(meta.sliders){
+      $('rKey').value=meta.sliders.key; $('oKey').textContent=meta.sliders.key;
+      $('rDot').value=meta.sliders.dot; $('oDot').textContent=meta.sliders.dot;
+      $('rErr').value=meta.sliders.err; $('oErr').textContent=meta.sliders.err;
+    }
+    state.viewInit=false;
+    renderLayers(); fitView(); updateExport();
+    toast('project restored');
+  }catch(e){ toast('couldn’t restore saved project',3000); }
+}
+
+$('bClear').addEventListener('click',()=>{
+  if(!confirm('Clear the saved project and all parts?'))return;
+  clearTimeout(saveT);
+  idbClear();
+  state.layers=[]; state.selId=null; state.docW=0; state.docH=0; state.viewInit=false;
+  renderLayers(); draw(); updateExport();
+  toast('project cleared');
+});
+
 renderLayers();
 fitView();
+if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
+restoreProject();
 </script>
 </body>
 </html>

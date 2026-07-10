@@ -75,6 +75,15 @@ so it still needs network to load).
   skeleton points (`tanAt`), not from the anchor markup itself — there's no
   current mechanism for the artist to mark "smooth" vs. "corner" anchors
   differently (see Known Issues / earlier design intent below).
+- **Persistence** (`openDB`/`saveProject`/`restoreProject`): auto-saves
+  the whole project to IndexedDB (db `keyline`, store `project`) — each
+  frame's original file blob under `img:<layerId>:<slot>` written at
+  upload time, plus one `meta` record with all serializable layer state,
+  debounce-written (300ms) from every mutation point (upload, vectorize,
+  rename, toggle, delete, move/pinch end, slider change). Restored
+  silently on page load; "Clear saved project" button wipes the store.
+  All IDB calls degrade silently to in-memory-only if unavailable
+  (private browsing).
 - **Auto-fill** (`polygonInteriorPoint`/`artPixelColor`): for each closed
   traced shape, finds a point guaranteed to be inside it via a
   horizontal-scanline test (centroid alone can land outside on concave
@@ -112,10 +121,13 @@ so it still needs network to load).
 - **Export is single-resolution SVG only.** No PDF/AI-native export path,
   no per-part stroke-width override, no way to re-import a previously
   exported SVG to keep refining.
-- **No project save/load.** Everything lives in-memory; refreshing the
-  page loses all Parts. Given the multi-image-per-part workflow, this is
-  probably the highest-value near-term addition — likely IndexedDB (images
-  as blobs) rather than localStorage given file sizes involved.
+- **Project persistence is single-project only.** Auto-save/restore via
+  IndexedDB now exists (original file blobs per frame + one meta record;
+  see Architecture notes), but there's exactly one project slot — no way
+  to keep several characters as separate saved projects, and no
+  export/import of a project file for backup or moving between devices.
+  `navigator.storage.persist()` is requested but the OS can still evict
+  storage under pressure.
 - **Mobile gesture conflicts.** Pan/zoom and move/scale share the same
   two-finger pinch gesture disambiguated only by a Pan/Move-part UI toggle;
   hasn't been stress-tested on an actual iPad session yet.
