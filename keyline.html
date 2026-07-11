@@ -419,13 +419,24 @@ function draw(){
   ctx.restore();
 }
 
-/* gestures: one finger pans the view, two-finger pinch zooms.
-   no mode toggle — pieces come from the same source doc and are
-   already aligned, so there's no part-move gesture anymore */
+/* gestures: with a piece selected (Geometry tab), one-finger drag
+   moves *that piece only* (tx/ty) so pieces from separately-exported
+   source docs can be lined up by hand; two-finger pinch always pans/
+   zooms the shared view regardless of selection, so you can still
+   navigate while positioning. With nothing selected, one-finger drag
+   falls back to panning the view. Matches the touch/finger-count
+   convention of Procreate etc. rather than a Pan/Move mode toggle. */
 let touches=new Map();
+let moveUndoPushed=false;
+function selectedLayerForMove(){
+  return state.tab==='geo' ? state.layers.find(l=>l.id===state.selId) : null;
+}
 cv.addEventListener('pointerdown', e=>{
   touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
   cv.setPointerCapture(e.pointerId);
+  if(touches.size===1 && !moveUndoPushed && selectedLayerForMove()){
+    pushUndo(); moveUndoPushed=true;
+  }
 });
 cv.addEventListener('pointermove', e=>{
   if(!touches.has(e.pointerId)) return;
@@ -433,7 +444,13 @@ cv.addEventListener('pointermove', e=>{
   const dx=(e.clientX-t.x)*devicePixelRatio, dy=(e.clientY-t.y)*devicePixelRatio;
 
   if(touches.size===1){
-    state.view.x+=dx; state.view.y+=dy;
+    const sel=selectedLayerForMove();
+    if(sel){
+      sel.tx+=dx/state.view.z; sel.ty+=dy/state.view.z;
+      scheduleSave();
+    } else {
+      state.view.x+=dx; state.view.y+=dy;
+    }
   } else if(touches.size===2){
     const arr=[...touches.entries()];
     const other=arr.find(([id])=>id!==e.pointerId)[1];
@@ -448,7 +465,7 @@ cv.addEventListener('pointermove', e=>{
   touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
   draw();
 });
-const endT=e=>touches.delete(e.pointerId);
+const endT=e=>{ touches.delete(e.pointerId); if(!touches.size)moveUndoPushed=false; };
 cv.addEventListener('pointerup',endT);
 cv.addEventListener('pointercancel',endT);
 cv.addEventListener('wheel',e=>{

@@ -31,8 +31,9 @@ built from three separate image uploads:
 The app keys dots/lines out of their frame, skeletonizes the guide line to
 a 1px centerline, snaps the artist's anchors onto it, and fits bezier
 segments between consecutive anchors (auto-runs when both marker frames
-are present). All pieces come from the same source doc so they're already
-aligned — there is no part-positioning gesture anymore.
+are present). Pieces are often exported from different source docs/crops,
+so they don't arrive pre-aligned — positioning is a per-piece touch
+gesture (see Architecture notes) rather than assumed.
 
 The UI is two tabs over one shared canvas (iPhone-portrait-first):
 
@@ -75,11 +76,21 @@ so it still needs network to load).
   (Image elements), `origW/origH/scale/W/H` (working-resolution downscale,
   capped at `WORK_MAX`), `anchors[]`, `paths[]` (traced polylines),
   `curves[]` (fitted beziers). A **layer** (`newLayer`) extends that with
-  `visible`, appearance (`fill/stroke/strokeW`), legacy `tx/ty/s` (kept
-  for old saves; no UI mutates them anymore), and `variants[]` (content
-  objects) + `activeVar` (-1 = default). `activeContent(L)` resolves what
+  `visible`, appearance (`fill/stroke/strokeW`), `tx/ty` (per-layer
+  position, doc-space; `s` reserved for a future per-layer scale gesture
+  but not yet wired to touch input), and `variants[]` (content objects) +
+  `activeVar` (-1 = default). `activeContent(L)` resolves what
   renders/exports. `vectorizeContent(L,C)` runs the trace pipeline on
   either the layer's own frames or a variant's.
+- **Positioning gesture**: pieces are frequently exported from separate
+  source docs/crops and don't arrive pre-aligned, so placement is a
+  finger-count-driven touch convention (matches Procreate/Photoshop
+  rather than a Pan/Move mode toggle) — one-finger drag on the canvas
+  moves *only* the selected layer's `tx/ty` (Geometry tab only; falls
+  back to panning the shared view when nothing's selected), while
+  two-finger pinch always pans/zooms the shared view regardless of
+  selection, so you can navigate while positioning. The move is pushed
+  to undo once per drag gesture, not per pixel.
 - **Key detection** (`hueMask`): if the dots/lines frame has real alpha
   transparency, every non-transparent pixel is treated as a mark —
   color-agnostic, since transparency alone identifies marks. If the frame
