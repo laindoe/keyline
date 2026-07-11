@@ -39,21 +39,37 @@ The UI is two tabs over one shared canvas (iPhone-portrait-first):
 
 - **Geometry tab** — icon-only layer rows (visibility eye, thumbnail,
   name, yellow art / pink dots / cyan lines upload buttons, green
-  per-piece SVG download, and a +/chevron for variants). A piece can hold
-  **variants** (eye open / closed / sad...) managed on a separate
-  full-screen page — never nested in the main list. Exactly one variant
-  (or the default) is active per piece; the eye icons on the variant page
-  behave like radio buttons. Top bar: hamburger (project name/new/delete,
-  trace-settings sliders, copy-SVG), logo, undo, redo. Project row:
-  project switcher + Export SVG (whole character: visible pieces, active
-  variants).
-- **Appearance tab** — same rows, but each piece gets exactly ONE fill
-  swatch, ONE stroke swatch (native color inputs), and a stroke-width
-  select ("2 px" style; rendered width scales with doc resolution via
-  `strokePx()` so the numbers stay display-scale). No per-shape fills, no
-  region detection — the artist separates color regions into pieces
-  during Geometry. Vectorizing seeds the piece fill by sampling the art
-  frame inside the first closed traced shape.
+  per-piece SVG download, and a +/chevron for variants). Rows swipe left
+  to reveal a delete (trash) button — this is the *only* place a piece
+  can be deleted; Appearance rows have no delete affordance at all, since
+  the two tabs render the same `state.layers` array — deleting a piece
+  from Geometry removes it everywhere, nothing to keep in sync
+  separately. A piece can hold **variants** (eye open / closed / sad...)
+  managed on a separate full-screen page — never nested in the main
+  list. Exactly one variant (or the default) is active per piece; the
+  eye icons on the variant page behave like radio buttons. Top bar:
+  hamburger (project name/new/delete, trace-settings sliders, copy-SVG),
+  logo, undo, redo. Project row: project switcher + Export SVG (whole
+  character: visible pieces, active variants).
+- **Appearance tab** — same rows (no delete), but each piece gets exactly
+  ONE fill swatch, ONE stroke swatch (native color inputs), and a
+  stroke-width select ("2 px" style; rendered width scales with doc
+  resolution via `strokePx()` so the numbers stay display-scale). No
+  per-shape fills, no region detection — the artist separates color
+  regions into pieces during Geometry. Vectorizing seeds the piece fill
+  by sampling the art frame inside the first closed traced shape (this
+  sampling reads the art image's pixels directly and is unaffected by
+  the art-underlay display toggle below).
+- **Art-underlay toggle** (`state.showArt`, one bool per tab) — a small
+  pill button (top-right of the canvas) shows/hides the raw art frame
+  behind the traced geometry, tracked independently per tab: Geometry
+  defaults OFF (so it reads as pure line/shape work, no color at all —
+  `draw()` only fills closed curves and uses the piece's real stroke
+  color when `state.tab==='app'`; Geometry always strokes in a neutral
+  bone/selection-green regardless of the piece's assigned stroke),
+  Appearance defaults ON (since that's where you're color-matching
+  against the source art). Not persisted — resets to the defaults each
+  load.
 
 Undo/redo covers structural + appearance mutations via full-state
 snapshots (`takeSnap`/`applySnap`, capped at 25; images held by

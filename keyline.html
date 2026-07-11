@@ -96,6 +96,15 @@ select.ctl{
 #emptyStage .bigdot::after{content:'';position:absolute;inset:13px;border-radius:50%;background:var(--anchor)}
 #emptyStage p{font-size:12.5px;max-width:280px;line-height:1.55}
 #status{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--line);border-radius:99px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--guide);padding:8px 16px;display:none;z-index:5;white-space:nowrap}
+#bToggleArt{
+  position:absolute;top:10px;right:10px;z-index:6;
+  display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:99px;
+  background:var(--panel-2);border:1px solid var(--line);color:var(--dim);
+  font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  cursor:pointer;
+}
+#bToggleArt.on{color:var(--guide);border-color:color-mix(in srgb,var(--guide) 45%,transparent)}
+#bToggleArt svg{width:15px;height:15px}
 
 /* ---------- tabs ---------- */
 .tabs{display:flex;flex-shrink:0;border-bottom:1px solid var(--line)}
@@ -260,6 +269,10 @@ input[type=file]{display:none}
 
 <div id="stage">
   <canvas id="cv"></canvas>
+  <button id="bToggleArt" title="toggle art underlay">
+    <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.8" fill="currentColor"/><path d="M4.5 18.5 10 13l4 4 3-3 2.5 2.5" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    Art
+  </button>
   <div id="emptyStage">
     <div class="bigdot"></div>
     <p>Add a layer. Each piece takes three frames: the art, its anchor dots, and the guide lines connecting them.</p>
@@ -326,6 +339,7 @@ const state = {
   view:{x:0,y:0,z:0.5},
   viewInit:false,
   docW:0, docH:0,       // doc space = first frame's original dims
+  showArt:{geo:false,app:true}, // art-underlay visibility, tracked per tab
 };
 let uid=1;
 let varLayerId=null;    // layer whose variant page is open
@@ -394,7 +408,7 @@ function draw(){
     ctx.save();
     ctx.translate(L.tx,L.ty); ctx.scale(L.s,L.s);
 
-    if(C.art){ try{ ctx.drawImage(C.art,0,0,C.origW,C.origH); }catch(e){} }
+    if(C.art && state.showArt[state.tab]){ try{ ctx.drawImage(C.art,0,0,C.origW,C.origH); }catch(e){} }
 
     // preview marker frames on the selected layer before vectorizing,
     // so an upload always gives visible on-canvas confirmation
@@ -417,9 +431,12 @@ function draw(){
         }
         if(c.closed){
           ctx.closePath();
-          if(L.fill){ ctx.fillStyle=L.fill; ctx.fill(); }
+          if(state.tab==='app' && L.fill){ ctx.fillStyle=L.fill; ctx.fill(); }
         }
-        ctx.strokeStyle = selTint ? '#8dff5a' : (L.stroke||'#000');
+        // Geometry is shape-only — color belongs to Appearance. A
+        // selected piece's outline tints green there; everywhere else
+        // (and always in Appearance) the real assigned stroke shows.
+        ctx.strokeStyle = state.tab==='app' ? (L.stroke||'#000') : (selTint?'#8dff5a':'#e9e6dc');
         ctx.stroke();
       }
     }
@@ -597,8 +614,23 @@ function setTab(t){
   state.tab=t;
   $('tabGeo').classList.toggle('on',t==='geo');
   $('tabApp').classList.toggle('on',t==='app');
+  refreshArtToggle();
   renderAll(); draw();
 }
+
+/* art-underlay visibility is tracked separately per tab: Geometry
+   defaults to lines-only (pure shape, no reference clutter), while
+   Appearance defaults to showing art since that's what you're
+   color-matching against. Auto-fill sampling always reads the art's
+   real pixels regardless of this toggle — it's a display-only switch. */
+function refreshArtToggle(){
+  $('bToggleArt').classList.toggle('on',!!state.showArt[state.tab]);
+}
+$('bToggleArt').addEventListener('click',()=>{
+  state.showArt[state.tab]=!state.showArt[state.tab];
+  refreshArtToggle();
+  draw();
+});
 
 /* ================= icons ================= */
 const ICONS={
@@ -674,12 +706,16 @@ async function deleteLayer(L){
 function renderList(){
   layerList.innerHTML='';
   for(const L of state.layers){
+    const isGeo=state.tab==='geo';
     const wrap=document.createElement('div');
     wrap.className='row-wrap';
-    const trash=document.createElement('button');
-    trash.className='row-trash';
-    trash.innerHTML=ICONS.trash;
-    trash.title='delete piece';
+    let trash=null,swipe=null;
+    if(isGeo){
+      trash=document.createElement('button');
+      trash.className='row-trash';
+      trash.innerHTML=ICONS.trash;
+      trash.title='delete piece';
+    }
 
     const el=document.createElement('div');
     el.className='row'+(L.id===state.selId?' sel':'');
@@ -702,11 +738,13 @@ function renderList(){
           ${[0,1,2,3,4,5,6,8].map(w=>`<option value="${w}" ${w===(L.strokeW==null?2:L.strokeW)?'selected':''}>${w} px</option>`).join('')}
         </select>`;
     }
-    const swipe=wireSwipe(el);
-    el._swipe=swipe;
-    trash.addEventListener('click',e=>{ e.stopPropagation(); swipe.close(false); deleteLayer(L); });
+    if(isGeo){
+      swipe=wireSwipe(el);
+      el._swipe=swipe;
+      trash.addEventListener('click',e=>{ e.stopPropagation(); swipe.close(false); deleteLayer(L); });
+      wrap.appendChild(trash);
+    }
     wireRow(el,L,C);
-    wrap.appendChild(trash);
     wrap.appendChild(el);
     layerList.appendChild(wrap);
     drawThumb(el.querySelector('.thumb'),L,C);
@@ -777,9 +815,14 @@ document.addEventListener('pointerdown',e=>{
 
 /* readonly input that unlocks for editing on double-tap and relocks on
    blur — iOS keeps the keyboard away from readonly inputs, so a plain
-   row tap never starts a rename */
-function editableOnDblTap(input){
-  let lastTap=0;
+   row tap never starts a rename. The double-tap timer is keyed by a
+   stable id (not a per-element closure var): the first tap of a
+   double-tap also *selects* the row, which triggers a renderList()
+   that destroys and recreates this exact input — a plain local
+   variable would lose the first tap's timestamp right when the
+   second tap lands on the freshly-rebuilt node. */
+const _lastNameTap=new Map();
+function editableOnDblTap(input,key){
   const unlock=()=>{
     input.readOnly=false;
     input.focus();
@@ -788,8 +831,8 @@ function editableOnDblTap(input){
   input.addEventListener('dblclick',unlock);
   input.addEventListener('pointerup',()=>{
     const now=Date.now();
-    if(now-lastTap<350)unlock();
-    lastTap=now;
+    if(now-(_lastNameTap.get(key)||0)<400)unlock();
+    _lastNameTap.set(key,now);
   });
   input.addEventListener('blur',()=>{ input.readOnly=true; });
 }
@@ -820,7 +863,7 @@ function wireRow(el,L,C){
   if(name){
     // tapping the name only selects the row; renaming is an explicit
     // double-tap so the keyboard doesn't pop on every row touch
-    editableOnDblTap(name);
+    editableOnDblTap(name,L.id);
     name.addEventListener('input',e=>{L.name=e.target.value;scheduleSave();});
     name.addEventListener('click',()=>{ if(state.selId!==L.id){state.selId=L.id;renderAll();draw();} });
   }
@@ -921,7 +964,7 @@ function renderVarPage(){
       }
     });
     const name=el.querySelector('[data-act=vname]');
-    editableOnDblTap(name);
+    editableOnDblTap(name,C.id);
     name.addEventListener('input',e=>{
       if(idx<0)L.name=e.target.value; else C.name=e.target.value;
       scheduleSave();
@@ -1676,6 +1719,7 @@ async function migrateLegacy(){
 renderAll();
 fitView();
 updateHistoryUI();
+refreshArtToggle();
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 (async function initProjects(){
   try{
