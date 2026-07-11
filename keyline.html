@@ -827,7 +827,7 @@ function renderList(){
         </select>`;
     }
     if(isGeo){
-      swipe=wireSwipe(el);
+      swipe=wireSwipe(el,wrap);
       el._swipe=swipe;
       trash.addEventListener('click',e=>{ e.stopPropagation(); swipe.close(false); deleteLayer(L); });
       wrap.appendChild(trash);
@@ -848,7 +848,7 @@ function renderList(){
    up at the CSS level). Only one row stays open at a time. */
 let activeSwipe=null;
 const SWIPE_REVEAL=76;
-function wireSwipe(row){
+function wireSwipe(row,wrap){
   let startX=0,startY=0,decided=false,horiz=false,dragging=false,open=false,pid=null;
   const setX=(px,animate)=>{
     row.style.transition=animate?'transform .18s ease':'none';
@@ -856,7 +856,7 @@ function wireSwipe(row){
   };
   const close=(animate=true)=>{
     open=false; setX(0,animate);
-    if(activeSwipe&&activeSwipe.el===row)activeSwipe=null;
+    if(activeSwipe&&activeSwipe.wrap===wrap)activeSwipe=null;
   };
   row.addEventListener('pointerdown',e=>{
     if(e.isPrimary===false)return;
@@ -888,8 +888,8 @@ function wireSwipe(row){
     const finalX=(open?-SWIPE_REVEAL:0)+ddx;
     if(finalX<-SWIPE_REVEAL*0.4){
       open=true; setX(-SWIPE_REVEAL,true);
-      if(activeSwipe&&activeSwipe.el!==row)activeSwipe.close(true);
-      activeSwipe={el:row,close};
+      if(activeSwipe&&activeSwipe.wrap!==wrap)activeSwipe.close(true);
+      activeSwipe={wrap,close};
     } else {
       close(true);
     }
@@ -899,7 +899,13 @@ function wireSwipe(row){
   return {close,isOpen:()=>open};
 }
 document.addEventListener('pointerdown',e=>{
-  if(activeSwipe && !activeSwipe.el.contains(e.target))activeSwipe.close();
+  // check against the whole row-wrap, not just the .row itself — the
+  // trash button is a *sibling* of .row (both live in .row-wrap), so
+  // checking .row alone treated tapping trash as an "outside" tap and
+  // closed the swipe on pointerdown, before the delete click could ever
+  // register. That's what made the button feel like it needed pixel-
+  // precise taps: most taps landed "outside" by this stricter measure.
+  if(activeSwipe && !activeSwipe.wrap.contains(e.target))activeSwipe.close();
 },true);
 
 /* drag-to-reorder via the grip handle. Other rows are shifted purely
