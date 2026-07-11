@@ -37,14 +37,21 @@ gesture (see Architecture notes) rather than assumed.
 
 The UI is two tabs over one shared canvas (iPhone-portrait-first):
 
-- **Geometry tab** — icon-only layer rows (visibility eye, thumbnail,
-  name, yellow art / pink dots / cyan lines upload buttons, green
-  per-piece SVG download, and a +/chevron for variants). Rows swipe left
-  to reveal a delete (trash) button — this is the *only* place a piece
-  can be deleted; Appearance rows have no delete affordance at all, since
-  the two tabs render the same `state.layers` array — deleting a piece
-  from Geometry removes it everywhere, nothing to keep in sync
-  separately. A piece can hold **variants** (eye open / closed / sad...)
+- **Geometry tab** — icon-only layer rows (grip drag-handle, visibility
+  eye, thumbnail, name, yellow art / pink dots / cyan lines upload
+  buttons, green per-piece SVG download, and a +/chevron for variants).
+  Rows swipe left to reveal a delete (trash) button — this is the *only*
+  place a piece can be deleted; Appearance rows have no delete affordance
+  at all, since the two tabs render the same `state.layers` array —
+  deleting a piece from Geometry removes it everywhere, nothing to keep
+  in sync separately. The grip handle drags a row to reorder pieces
+  (`wireDragHandle`): other rows shift via CSS transform only while
+  dragging (classic translate-based reorder, matching the swipe/move
+  gestures' pattern of "visual feedback first, mutate state once on
+  release"); `state.layers` and the DOM are only touched on pointerup, as
+  a single undo step. Scoped to Geometry — Appearance renders the same
+  array, so order changes show up there too without its own handle.
+  A piece can hold **variants** (eye open / closed / sad...)
   managed on a separate full-screen page — never nested in the main
   list. Exactly one variant (or the default) is active per piece; the
   eye icons on the variant page behave like radio buttons. Top bar:

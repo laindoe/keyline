@@ -143,6 +143,14 @@ select.ctl{
   touch-action:pan-y;will-change:transform;
 }
 .row.sel{border-color:var(--guide)}
+.row-wrap.dragging{position:relative;z-index:20}
+.row-wrap.dragging .row{box-shadow:0 10px 26px -6px rgba(0,0,0,.55);border-color:var(--guide)}
+.draghandle{
+  width:20px;height:36px;display:flex;align-items:center;justify-content:center;
+  background:transparent;border:none;color:var(--dim);cursor:grab;padding:0;flex-shrink:0;
+  touch-action:none;
+}
+.draghandle svg{width:16px;height:16px}
 .row .thumb{width:38px;height:38px;border-radius:9px;background:var(--panel);flex-shrink:0}
 .row input.name{
   flex:1;min-width:0;background:transparent;border:none;color:var(--bone);
@@ -644,6 +652,7 @@ const ICONS={
   chev:'<svg viewBox="0 0 24 24" fill="none"><path d="m9 5 7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   x:'<svg viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   trash:'<svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 .8 12.1a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  grip:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.7"/><circle cx="9" cy="12" r="1.7"/><circle cx="9" cy="18" r="1.7"/><circle cx="15" cy="6" r="1.7"/><circle cx="15" cy="12" r="1.7"/><circle cx="15" cy="18" r="1.7"/></svg>',
 };
 
 /* ================= layer list ================= */
@@ -722,6 +731,7 @@ function renderList(){
     const C=activeContent(L);
     if(state.tab==='geo'){
       el.innerHTML=`
+        <button class="draghandle" title="drag to reorder">${ICONS.grip}</button>
         <button class="icb" style="color:${L.visible?'var(--guide)':'var(--dim)'}" data-act="vis" title="visibility">${L.visible?ICONS.eye:ICONS.eyeOff}</button>
         <canvas class="thumb" width="76" height="76"></canvas>
         <input class="name" value="${esc(L.name)}" placeholder="part ${L.id}" data-act="name" readonly>
@@ -743,6 +753,7 @@ function renderList(){
       el._swipe=swipe;
       trash.addEventListener('click',e=>{ e.stopPropagation(); swipe.close(false); deleteLayer(L); });
       wrap.appendChild(trash);
+      wireDragHandle(el.querySelector('.draghandle'),wrap,L);
     }
     wireRow(el,L,C);
     wrap.appendChild(el);
@@ -812,6 +823,61 @@ function wireSwipe(row){
 document.addEventListener('pointerdown',e=>{
   if(activeSwipe && !activeSwipe.el.contains(e.target))activeSwipe.close();
 },true);
+
+/* drag-to-reorder via the grip handle. Other rows are shifted purely
+   with CSS transforms while dragging (classic translate-based
+   reorder), and the real state.layers array — and the DOM — only get
+   touched once, on release. Scoped to the Geometry list; Appearance
+   renders the same array so order changes there too. */
+let dragCtx=null;
+function wireDragHandle(handle,wrap,L){
+  handle.addEventListener('pointerdown',e=>{
+    e.stopPropagation(); e.preventDefault();
+    if(activeSwipe)activeSwipe.close();
+    const order=[...state.layers];
+    const fromIndex=order.indexOf(L);
+    const wraps=[...layerList.querySelectorAll('.row-wrap')];
+    const rects=wraps.map(w=>w.getBoundingClientRect());
+    const rowStep=wraps.length>1?(rects[1].top-rects[0].top):(rects[0]?.height||60);
+    wrap.classList.add('dragging');
+    try{handle.setPointerCapture(e.pointerId);}catch(err){}
+    dragCtx={pid:e.pointerId,L,wrap,order,fromIndex,curIndex:fromIndex,startY:e.clientY,rowStep,wraps};
+  });
+  handle.addEventListener('pointermove',e=>{
+    if(!dragCtx||dragCtx.pid!==e.pointerId)return;
+    const dy=e.clientY-dragCtx.startY;
+    dragCtx.wrap.style.transform=`translateY(${dy}px)`;
+    const steps=Math.round(dy/dragCtx.rowStep);
+    const newIndex=Math.max(0,Math.min(dragCtx.order.length-1,dragCtx.fromIndex+steps));
+    if(newIndex!==dragCtx.curIndex){
+      dragCtx.curIndex=newIndex;
+      dragCtx.wraps.forEach((w,i)=>{
+        if(w===dragCtx.wrap)return;
+        let shift=0;
+        if(dragCtx.curIndex>dragCtx.fromIndex && i>dragCtx.fromIndex && i<=dragCtx.curIndex) shift=-1;
+        else if(dragCtx.curIndex<dragCtx.fromIndex && i<dragCtx.fromIndex && i>=dragCtx.curIndex) shift=1;
+        w.style.transition='transform .15s ease';
+        w.style.transform=shift?`translateY(${shift*dragCtx.rowStep}px)`:'';
+      });
+    }
+  });
+  const end=e=>{
+    if(!dragCtx||dragCtx.pid!==e.pointerId)return;
+    const {wrap:draggedWrap,wraps,order,fromIndex,curIndex}=dragCtx;
+    dragCtx=null;
+    draggedWrap.classList.remove('dragging');
+    wraps.forEach(w=>{ w.style.transition=''; w.style.transform=''; });
+    if(curIndex!==fromIndex){
+      pushUndo();
+      const moved=order.splice(fromIndex,1)[0];
+      order.splice(curIndex,0,moved);
+      state.layers=order;
+      renderAll(); draw(); updateExport(); scheduleSave();
+    }
+  };
+  handle.addEventListener('pointerup',end);
+  handle.addEventListener('pointercancel',end);
+}
 
 /* readonly input that unlocks for editing on double-tap and relocks on
    blur — iOS keeps the keyboard away from readonly inputs, so a plain
