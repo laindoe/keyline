@@ -100,6 +100,13 @@ so it still needs network to load).
   path is unverified against real opaque-frame uploads — the artist's
   actual workflow uses transparent-only frames, so the opaque path only
   has synthetic test coverage so far.
+- **Confirm modal** (`askConfirm`): every destructive action (delete
+  layer/variant/project) routes through this in-app modal, never
+  `window.confirm()` — iOS silently no-ops `alert`/`confirm`/`prompt`
+  for web apps launched from the home screen (standalone display
+  mode), which is exactly how this app is meant to be used, so a
+  native `confirm()` gate could pass through with no dialog ever
+  shown and no way to cancel.
 - **Skeletonization**: Zhang–Suen thinning (`thin()`) reduces the guide
   line's blob mask to a 1px centerline before tracing.
 - **Path tracing** (`tracePaths`): walks the skeleton pixel-by-pixel,

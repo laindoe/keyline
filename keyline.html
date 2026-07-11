@@ -113,9 +113,21 @@ select.ctl{
 .row-trash{
   position:absolute;top:0;right:0;bottom:0;width:76px;
   display:flex;align-items:center;justify-content:center;
-  background:var(--anchor);border:none;color:#10131f;cursor:pointer;padding:0;
+  background:transparent;border:none;color:var(--anchor);cursor:pointer;padding:0;
 }
 .row-trash svg{width:22px;height:22px}
+
+/* ---------- confirm modal ---------- */
+#confirmModal{position:fixed;inset:0;z-index:90;display:none;align-items:flex-end;justify-content:center;background:rgba(8,10,18,.55)}
+#confirmModal.open{display:flex}
+#confirmModal .card{
+  width:100%;max-width:600px;background:var(--panel);border:1px solid var(--line);
+  border-radius:18px 18px 0 0;padding:22px 18px calc(18px + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;gap:14px;
+}
+#confirmModal .msg{font-family:'Archivo',sans-serif;font-size:15px;font-weight:600;color:var(--bone);text-align:center;line-height:1.4}
+#confirmModal .btnrow{display:flex;gap:8px}
+#confirmModal .btnrow .btn{flex:1}
 .row{
   position:relative;display:flex;align-items:center;gap:5px;padding:7px 8px;
   background:var(--panel-2);border:1px solid var(--line);border-radius:12px;
@@ -276,6 +288,16 @@ input[type=file]{display:none}
   <div id="varList"></div>
   <div class="vfoot">
     <button class="btn accent" id="bAddVar">+ Add variant</button>
+  </div>
+</div>
+
+<div id="confirmModal">
+  <div class="card">
+    <div class="msg" id="confirmMsg">Delete this?</div>
+    <div class="btnrow">
+      <button class="btn ghost" id="bConfirmCancel">Cancel</button>
+      <button class="btn danger" id="bConfirmOk">Delete</button>
+    </div>
   </div>
 </div>
 </div>
@@ -527,6 +549,30 @@ function toast(msg,ms=2000){
   clearTimeout(s._t);s._t=setTimeout(()=>s.style.display='none',ms);
 }
 
+/* ================= confirm modal =================
+   window.confirm() is unreliable here: iOS silently no-ops alert/
+   confirm/prompt for web apps launched from the home screen
+   (standalone display mode), which is exactly how this app is meant
+   to be used — so a destructive action gated on confirm() could fire
+   with no dialog ever shown. This in-app modal replaces every use. */
+let _confirmResolve=null;
+function askConfirm(msg,okLabel='Delete'){
+  return new Promise(res=>{
+    _confirmResolve=res;
+    $('confirmMsg').textContent=msg;
+    $('bConfirmOk').textContent=okLabel;
+    $('confirmModal').classList.add('open');
+  });
+}
+function _settleConfirm(v){
+  $('confirmModal').classList.remove('open');
+  const r=_confirmResolve; _confirmResolve=null;
+  if(r)r(v);
+}
+$('bConfirmCancel').addEventListener('click',()=>_settleConfirm(false));
+$('bConfirmOk').addEventListener('click',()=>_settleConfirm(true));
+$('confirmModal').addEventListener('click',e=>{ if(e.target.id==='confirmModal')_settleConfirm(false); });
+
 /* ================= drawer ================= */
 $('bMenu').addEventListener('click',e=>{
   e.stopPropagation();
@@ -616,8 +662,8 @@ function frameButtons(C){
     <button class="icb ${C.curves.length?'':'off'}" style="color:var(--guide)" data-act="dl" title="download SVG">${ICONS.dl}</button>`;
 }
 
-function deleteLayer(L){
-  if(!confirm('Delete “'+layerLabel(L)+'”?'))return;
+async function deleteLayer(L){
+  if(!await askConfirm('Delete “'+layerLabel(L)+'”?'))return;
   pushUndo();
   state.layers=state.layers.filter(x=>x!==L);
   if(state.selId===L.id)state.selId=null;
@@ -857,7 +903,7 @@ function renderVarPage(){
       ${idx<0?'<span class="badge">Default</span>':''}
       ${frameButtons(C)}
       ${idx>=0?`<button class="icb" style="color:var(--dim)" data-act="vdel" title="delete variant">${ICONS.x}</button>`:''}`;
-    el.addEventListener('click',e=>{
+    el.addEventListener('click',async e=>{
       const btn=e.target.closest('[data-act]');
       const act=btn?.dataset.act;
       if(!act)return;
@@ -865,7 +911,7 @@ function renderVarPage(){
       if(['art','dots','lines'].includes(act)) pickFile(L,C,act);
       if(act==='dl') downloadSVG([{L,C}], (idx<0?layerLabel(L):(C.name||layerLabel(L)+'-variant')));
       if(act==='vdel'){
-        if(!confirm('Delete this variant?'))return;
+        if(!await askConfirm('Delete this variant?'))return;
         pushUndo();
         L.variants.splice(idx,1);
         if(L.activeVar===idx)L.activeVar=-1;
@@ -1591,7 +1637,7 @@ $('bNewProj').addEventListener('click',()=>{
 });
 $('bDelProj').addEventListener('click',async()=>{
   const p=projects.find(x=>x.id===projId);
-  if(!confirm('Delete “'+projLabel(p||{id:projId})+'” and all its pieces?'))return;
+  if(!await askConfirm('Delete “'+projLabel(p||{id:projId})+'” and all its pieces?'))return;
   clearTimeout(saveT); saveT=null;
   const pid=projId;
   projects=projects.filter(x=>x.id!==pid);
