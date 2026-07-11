@@ -18,10 +18,11 @@ anchors instead of an automated corner-detection heuristic.
 
 ## Workflow (as the artist actually uses it)
 
-Each character part (head, a single loc, an arm, etc.) is a "Part" / layer
-in the app, and is built from three separate image uploads:
+The artist separates their character into pieces in Procreate (head base,
+hair, each eye state, glasses, ...). Each piece is a layer row in the app,
+built from three separate image uploads:
 
-1. **art** — the clean linework/color for that part
+1. **art** — the clean linework/color for that piece
 2. **dots** — anchor points marking corners, as a transparent-background
    Procreate layer with just the dots on it (any color — see Key detection)
 3. **lines** — a guide line connecting the dots along the path to trace,
@@ -29,9 +30,33 @@ in the app, and is built from three separate image uploads:
 
 The app keys dots/lines out of their frame, skeletonizes the guide line to
 a 1px centerline, snaps the artist's anchors onto it, and fits bezier
-segments between consecutive anchors. Multiple Parts compose together
-RIGGR-style: select a part, drag/pinch to position it, export one SVG with
-a named `<g>` per part.
+segments between consecutive anchors (auto-runs when both marker frames
+are present). All pieces come from the same source doc so they're already
+aligned — there is no part-positioning gesture anymore.
+
+The UI is two tabs over one shared canvas (iPhone-portrait-first):
+
+- **Geometry tab** — icon-only layer rows (visibility eye, thumbnail,
+  name, yellow art / pink dots / cyan lines upload buttons, green
+  per-piece SVG download, and a +/chevron for variants). A piece can hold
+  **variants** (eye open / closed / sad...) managed on a separate
+  full-screen page — never nested in the main list. Exactly one variant
+  (or the default) is active per piece; the eye icons on the variant page
+  behave like radio buttons. Top bar: hamburger (project name/new/delete,
+  trace-settings sliders, copy-SVG), logo, undo, redo. Project row:
+  project switcher + Export SVG (whole character: visible pieces, active
+  variants).
+- **Appearance tab** — same rows, but each piece gets exactly ONE fill
+  swatch, ONE stroke swatch (native color inputs), and a stroke-width
+  select ("2 px" style; rendered width scales with doc resolution via
+  `strokePx()` so the numbers stay display-scale). No per-shape fills, no
+  region detection — the artist separates color regions into pieces
+  during Geometry. Vectorizing seeds the piece fill by sampling the art
+  frame inside the first closed traced shape.
+
+Undo/redo covers structural + appearance mutations via full-state
+snapshots (`takeSnap`/`applySnap`, capped at 25; images held by
+reference).
 
 ## Current file
 
@@ -46,10 +71,15 @@ so it still needs network to load).
 
 ## Architecture notes
 
-- `state.layers[]` holds one object per Part: `{art, dots, lines}` (Image
-  elements), `origW/origH/scale/W/H` (working-resolution downscale, capped
-  at `WORK_MAX`), `anchors[]`, `paths[]` (traced polylines), `curves[]`
-  (fitted beziers), `tx/ty/s` (compose-mode transform).
+- A **content** (`newContent`) is one traceable unit: `{art, dots, lines}`
+  (Image elements), `origW/origH/scale/W/H` (working-resolution downscale,
+  capped at `WORK_MAX`), `anchors[]`, `paths[]` (traced polylines),
+  `curves[]` (fitted beziers). A **layer** (`newLayer`) extends that with
+  `visible`, appearance (`fill/stroke/strokeW`), legacy `tx/ty/s` (kept
+  for old saves; no UI mutates them anymore), and `variants[]` (content
+  objects) + `activeVar` (-1 = default). `activeContent(L)` resolves what
+  renders/exports. `vectorizeContent(L,C)` runs the trace pipeline on
+  either the layer's own frames or a variant's.
 - **Key detection** (`hueMask`): if the dots/lines frame has real alpha
   transparency, every non-transparent pixel is treated as a mark —
   color-agnostic, since transparency alone identifies marks. If the frame
@@ -78,23 +108,24 @@ so it still needs network to load).
 - **Persistence** (`openDB`/`saveProject`/`loadProject`): auto-saves to
   IndexedDB (db `keyline`, store `project`) with multiple named
   projects. Keys: `projects` (index of `{id,name,updated}`), `cur`
-  (active id), `proj:<pid>:meta` (all serializable layer state,
-  debounce-written 300ms from every mutation point), and
-  `proj:<pid>:img:<layerId>:<slot>` (frame file blobs, written at upload
-  time). The active project restores silently on page load; the Project
-  panel section has a name field, switcher `<select>`, and New/Delete
-  buttons. Pre-multi-project saves (bare `meta` + `img:*` keys) migrate
-  to project 1 via `migrateLegacy()` on first load. All IDB calls
-  degrade silently to in-memory-only if unavailable (private browsing).
-- **Auto-fill** (`polygonInteriorPoint`/`artPixelColor`): for each closed
-  traced shape, finds a point guaranteed to be inside it via a
-  horizontal-scanline test (centroid alone can land outside on concave
-  shapes), then samples the artist's own `art` frame at that point and
-  bakes the result in as the shape's fill — both in the canvas preview and
-  the exported SVG (`fill="none"` stays the default for open paths). No
-  manual color-picker override exists yet; if the sampled point lands on a
-  boundary/anti-aliased pixel or a sliver shape, the fill can pick up the
-  wrong region's color.
+  (active id), `proj:<pid>:meta` (all serializable layer state incl.
+  variants + appearance, debounce-written 300ms from every mutation
+  point), and `proj:<pid>:img:<contentId>:<slot>` (frame file blobs,
+  written at upload time; content ids cover layers and variants). The
+  active project restores silently on page load. Pre-multi-project saves
+  (bare `meta` + `img:*` keys) migrate to project 1 via `migrateLegacy()`
+  on first load; older metas without variants/appearance load with
+  defaults, adopting the first per-curve `fill` (pre-v3 format) as the
+  piece fill. All IDB calls degrade silently to in-memory-only if
+  unavailable (private browsing).
+- **Fill seeding** (`polygonInteriorPoint`/`artPixelColor`): on first
+  trace of a piece, finds a point guaranteed inside the first closed
+  traced shape via a horizontal-scanline test (centroid alone can land
+  outside on concave shapes), samples the art frame there, and seeds the
+  piece's single `fill`. The artist owns the value afterward via the
+  Appearance tab; open paths always export `fill="none"`. If the sampled
+  point lands on a boundary/anti-aliased pixel, the seeded fill can be
+  off — that's what the Appearance override is for.
 
 ## Known issues / open items
 
