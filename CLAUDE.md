@@ -68,15 +68,34 @@ The UI is two tabs over one shared canvas (iPhone-portrait-first):
   sampling reads the art image's pixels directly and is unaffected by
   the art-underlay display toggle below).
 - **Art-underlay toggle** (`state.showArt`, one bool per tab) — a small
-  pill button (top-right of the canvas) shows/hides the raw art frame
-  behind the traced geometry, tracked independently per tab: Geometry
-  defaults OFF (so it reads as pure line/shape work, no color at all —
-  `draw()` only fills closed curves and uses the piece's real stroke
-  color when `state.tab==='app'`; Geometry always strokes in a neutral
+  red dot (top-right of the canvas, `#bToggleArt`, pure CSS `::after`
+  circle — no icon/label) shows/hides the raw art frame behind the
+  traced geometry, tracked independently per tab: Geometry defaults OFF
+  (so it reads as pure line/shape work, no color at all — `draw()` only
+  fills closed curves and uses the piece's real stroke color when
+  `state.tab==='app'`; Geometry always strokes in a neutral
   bone/selection-green regardless of the piece's assigned stroke),
   Appearance defaults ON (since that's where you're color-matching
   against the source art). Not persisted — resets to the defaults each
   load.
+- **Workspace controls** — a background-color swatch (top-left of the
+  canvas, `#bBgColor`) sets `--stage-bg` (persisted per-project,
+  `bgColor` in the meta record; defaults to `--ink` on a new project);
+  the grid overlay stays visible on top of any chosen color since it's
+  a separate `background-image` layer. A vertical zoom panel (left edge,
+  `.zoompanel`) has +/−/fit buttons (`zoomBy()`, `fitView()`) as a
+  discoverable alternative to pinch-zoom.
+- **Per-piece transform gestures** (Geometry tab, piece selected):
+  one-finger drag moves the piece (`tx/ty`, see Positioning gesture
+  above); simultaneously twisting two fingers rotates it around its own
+  center (`L.rot`, radians) — computed as the angle delta between the
+  two touch points each frame, independent of the same two-finger
+  gesture's pinch-distance zoom (which still always controls the shared
+  view). `draw()` applies translate→rotate(around origW/2,origH/2)
+  →scale, in that order; `buildSVG()` mirrors it with `rotate(deg,cx,cy)`
+  in the `<g transform>`, and `pieceBBox()` computes the true rotated
+  AABB for the export viewBox (an unrotated w×h box would clip a
+  rotated piece — e.g. ~41% wider at 45°).
 
 Undo/redo covers structural + appearance mutations via full-state
 snapshots (`takeSnap`/`applySnap`, capped at 25; images held by
