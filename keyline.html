@@ -600,7 +600,7 @@ function renderList(){
       el.innerHTML=`
         <button class="icb" style="color:${L.visible?'var(--guide)':'var(--dim)'}" data-act="vis" title="visibility">${L.visible?ICONS.eye:ICONS.eyeOff}</button>
         <canvas class="thumb" width="76" height="76"></canvas>
-        <input class="name" value="${esc(L.name)}" placeholder="part ${L.id}" data-act="name">
+        <input class="name" value="${esc(L.name)}" placeholder="part ${L.id}" data-act="name" readonly>
         ${L.id===state.selId?`<button class="icb" style="color:var(--dim)" data-act="del" title="delete piece">${ICONS.x}</button>`:''}
         ${frameButtons(C)}
         <button class="icb" style="color:var(--bone)" data-act="var" title="variants">${L.variants.length?ICONS.chev:ICONS.plus}</button>`;
@@ -608,7 +608,7 @@ function renderList(){
       el.innerHTML=`
         <button class="icb" style="color:${L.visible?'var(--guide)':'var(--dim)'}" data-act="vis" title="visibility">${L.visible?ICONS.eye:ICONS.eyeOff}</button>
         <canvas class="thumb" width="76" height="76"></canvas>
-        <input class="name" value="${esc(L.name)}" placeholder="part ${L.id}" data-act="name">
+        <input class="name" value="${esc(L.name)}" placeholder="part ${L.id}" data-act="name" readonly>
         <label class="swatch" title="fill"><span style="position:absolute;inset:0;background:${L.fill||'transparent'}"></span><input type="color" value="${L.fill||'#888888'}" data-act="fill"></label>
         <label class="swatch" title="stroke"><span style="position:absolute;inset:0;background:${L.stroke||'#000000'}"></span><input type="color" value="${L.stroke||'#000000'}" data-act="stroke"></label>
         <select class="wsel" data-act="wsel" title="stroke width">
@@ -620,6 +620,25 @@ function renderList(){
     drawThumb(el.querySelector('.thumb'),L,C);
   }
   $('emptyStage').style.display = state.layers.length? 'none':'flex';
+}
+
+/* readonly input that unlocks for editing on double-tap and relocks on
+   blur — iOS keeps the keyboard away from readonly inputs, so a plain
+   row tap never starts a rename */
+function editableOnDblTap(input){
+  let lastTap=0;
+  const unlock=()=>{
+    input.readOnly=false;
+    input.focus();
+    try{ input.setSelectionRange(0,input.value.length); }catch(e){}
+  };
+  input.addEventListener('dblclick',unlock);
+  input.addEventListener('pointerup',()=>{
+    const now=Date.now();
+    if(now-lastTap<350)unlock();
+    lastTap=now;
+  });
+  input.addEventListener('blur',()=>{ input.readOnly=true; });
 }
 
 function wireRow(el,L,C){
@@ -653,8 +672,11 @@ function wireRow(el,L,C){
   });
   const name=el.querySelector('[data-act=name]');
   if(name){
+    // tapping the name only selects the row; renaming is an explicit
+    // double-tap so the keyboard doesn't pop on every row touch
+    editableOnDblTap(name);
     name.addEventListener('input',e=>{L.name=e.target.value;scheduleSave();});
-    name.addEventListener('focus',()=>{ if(state.selId!==L.id){state.selId=L.id;draw();} });
+    name.addEventListener('click',()=>{ if(state.selId!==L.id){state.selId=L.id;renderAll();draw();} });
   }
   const fill=el.querySelector('input[data-act=fill]');
   if(fill){
@@ -731,7 +753,7 @@ function renderVarPage(){
     el.innerHTML=`
       <button class="icb" style="color:${active?'var(--guide)':'var(--dim)'}" data-act="use" title="show this variant">${active?ICONS.eye:ICONS.eyeOff}</button>
       <canvas class="thumb" width="76" height="76"></canvas>
-      <input class="name" value="${esc(idx<0?L.name:C.name)}" placeholder="${idx<0?('part '+L.id):('variant '+(idx+2))}" data-act="vname">
+      <input class="name" value="${esc(idx<0?L.name:C.name)}" placeholder="${idx<0?('part '+L.id):('variant '+(idx+2))}" data-act="vname" readonly>
       ${idx<0?'<span class="badge">Default</span>':''}
       ${frameButtons(C)}
       ${idx>=0?`<button class="icb" style="color:var(--dim)" data-act="vdel" title="delete variant">${ICONS.x}</button>`:''}`;
@@ -753,6 +775,7 @@ function renderVarPage(){
       }
     });
     const name=el.querySelector('[data-act=vname]');
+    editableOnDblTap(name);
     name.addEventListener('input',e=>{
       if(idx<0)L.name=e.target.value; else C.name=e.target.value;
       scheduleSave();
